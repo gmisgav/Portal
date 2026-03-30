@@ -1,4 +1,23 @@
-import { useState, useMemo, createContext, useContext } from "react";
+import { useState, useMemo, createContext, useContext, useCallback } from "react";
+
+// ── Persistent state hook (survives page refresh via localStorage) ────────────
+function usePersist(key, def) {
+  const [val, setVal] = useState(() => {
+    try {
+      const s = localStorage.getItem(key);
+      if (s !== null) return JSON.parse(s);
+    } catch {}
+    return typeof def === "function" ? def() : def;
+  });
+  const setP = useCallback(v => {
+    setVal(prev => {
+      const next = typeof v === "function" ? v(prev) : v;
+      try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, [key]);
+  return [val, setP];
+}
 import { ComposedChart, BarChart, LineChart, Bar, Line, Area, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -8,17 +27,17 @@ const LEVELS    = ["none","view","edit","admin"];
 const levelRank = l => LEVELS.indexOf(l);
 const canView   = l => levelRank(l) >= levelRank("view");
 const canEdit   = l => levelRank(l) >= levelRank("edit");
-const SECTION_IDS = ["economy","tournaments","missions","missions-v2","cashback","liveops","matchmaking"];
+const SECTION_IDS = ["economy","tournaments","missions","missions-v2","cashback","liveops","matchmaking","offers"];
 
 const SEED_USERS = [
   { id:1, email:"admin@company.com",   name:"Super Admin",   password:"admin123",  role:"superadmin",
-    permissions:{economy:"admin",tournaments:"admin",missions:"admin","missions-v2":"admin",cashback:"admin",liveops:"admin",matchmaking:"admin"} },
+    permissions:{economy:"admin",tournaments:"admin",missions:"admin","missions-v2":"admin",cashback:"admin",liveops:"admin",matchmaking:"admin",offers:"admin"} },
   { id:2, email:"lead@company.com",    name:"LiveOps Lead",  password:"lead123",   role:"editor",
-    permissions:{economy:"edit",tournaments:"edit",missions:"edit","missions-v2":"edit",cashback:"view",liveops:"view",matchmaking:"edit"} },
+    permissions:{economy:"edit",tournaments:"edit",missions:"edit","missions-v2":"edit",cashback:"view",liveops:"view",matchmaking:"edit",offers:"edit"} },
   { id:3, email:"analyst@company.com", name:"Data Analyst",  password:"analyst123",role:"viewer",
-    permissions:{economy:"view",tournaments:"view",missions:"view","missions-v2":"view",cashback:"none",liveops:"none",matchmaking:"view"} },
+    permissions:{economy:"view",tournaments:"view",missions:"view","missions-v2":"view",cashback:"none",liveops:"none",matchmaking:"view",offers:"view"} },
   { id:4, email:"junior@company.com",  name:"Junior Designer",password:"junior123",role:"viewer",
-    permissions:{economy:"none",tournaments:"none",missions:"view","missions-v2":"view",cashback:"none",liveops:"none",matchmaking:"none"} },
+    permissions:{economy:"none",tournaments:"none",missions:"view","missions-v2":"view",cashback:"none",liveops:"none",matchmaking:"none",offers:"view"} },
 ];
 
 const AuthCtx = createContext(null);
@@ -95,7 +114,7 @@ function UserRow({ u, currentUser, editId, setEditId, onSave, onDelete }) {
   const LEVEL_OPTS= ["none","view","edit","admin"];
   const LEVEL_COL = { none:"#4a5568", view:"#63b3ed", edit:"#f6ad55", admin:"#fc8181" };
   const ROLE_COL  = { superadmin:"#f6ad55", editor:"#90cdf4", viewer:"#718096" };
-  const FEAT_LIST = [{id:"economy",icon:"💰",label:"Economy"},{id:"tournaments",icon:"🏆",label:"Tournaments"},{id:"missions",icon:"🗡️",label:"Missions"},{id:"missions-v2",icon:"⚔️",label:"Missions V2"},{id:"cashback",icon:"💸",label:"Cash Back"},{id:"liveops",icon:"🎮",label:"Live Ops"}];
+  const FEAT_LIST = [{id:"economy",icon:"💰",label:"Economy"},{id:"tournaments",icon:"🏆",label:"Tournaments"},{id:"missions",icon:"🗡️",label:"Missions"},{id:"missions-v2",icon:"⚔️",label:"Missions V2"},{id:"cashback",icon:"💸",label:"Cash Back"},{id:"liveops",icon:"🎮",label:"Live Ops"},{id:"offers",icon:"🎁",label:"Offers"}];
 
   const startEdit  = () => { setDraft({...u, permissions:{...u.permissions}}); setEditId(u.id); };
   const cancelEdit = () => { setDraft(null); setEditId(null); };
@@ -398,6 +417,7 @@ const FEATURES = [
   {id:"cashback",   icon:"💸",label:"Cash Back",  color:"#fc8181",border:"#9b2c2c",bg:"#1a0d0d",status:"coming-soon",description:"Configure cashback percentages, tier thresholds, payout schedules and user eligibility rules."},
   {id:"liveops",      icon:"🎮",label:"Live Ops",      color:"#63b3ed",border:"#2b6cb0",bg:"#0d1520",status:"coming-soon",description:"Real-time event management, seasonal campaigns, push notifications and player engagement tools."},
   {id:"matchmaking",  icon:"🎯",label:"Matchmaking",  color:"#f687b3",border:"#97266d",bg:"#1a0d1a",status:"active",     description:"Score-based matchmaking simulator — pool scores, K-factor ELO, win ratio adjustments & match range config."},
+  {id:"offers",       icon:"🎁",label:"Offers",        color:"#f6ad55",border:"#744210",bg:"#1a1508",status:"active",     description:"Configure IAP offers — Cash Rush, Rolling, 1+1, Buy All, Special & Beginners Pack. Per-offer segments, AI insights, JSON & CSV export."},
 ];
 const STATUS = {
   "active":      {label:"Active",      bg:"#276749",color:"#9ae6b4",dot:"#68d391"},
@@ -471,10 +491,10 @@ let _nextTierId = 200;
 
 function MissionsPage({ onBack, readOnly, history, setHistory, histNote, setHistNote }) {
   const [tab,      setTab]      = useState("tiers");
-  const [rooms,    setRooms]    = useState(()=>DEF_ROOMS.map(r=>({...r})));
-  const [personas, setPersonas] = useState(()=>DEF_PERSONAS.map(p=>({...p})));
-  const [tiers,    setTiers]    = useState(()=>DEF_TIERS.map(t=>({...t})));
-  const [avgTokBC, setAvgTokBC] = useState(6.726);
+  const [rooms,    setRooms]    = usePersist("gp:m1Rooms",    ()=>DEF_ROOMS.map(r=>({...r})));
+  const [personas, setPersonas] = usePersist("gp:m1Personas", ()=>DEF_PERSONAS.map(p=>({...p})));
+  const [tiers,    setTiers]    = usePersist("gp:m1Tiers",    ()=>DEF_TIERS.map(t=>({...t})));
+  const [avgTokBC, setAvgTokBC] = usePersist("gp:m1AvgTokBC", 6.726);
   const [selP,     setSelP]     = useState(0);
   const [qaRes,    setQaRes]    = useState(null);
   const [copied,   setCopied]   = useState(false);
@@ -1017,28 +1037,28 @@ function MissionsPage({ onBack, readOnly, history, setHistory, histNote, setHist
 function MatchmakingPage({ onBack }) {
   const [tab, setTab] = useState("config");
 
-  const [poolScores, setPoolScores] = useState([
+  const [poolScores, setPoolScores] = usePersist("gp:mmPoolScores", [
     { pool:"Critical 🥵", value:30 },
     { pool:"Secure 🥺",   value:20 },
     { pool:"Happy 😆",    value:10 },
     { pool:"Awesome 🤑",  value:0  },
   ]);
-  const [winRatioScores, setWinRatioScores] = useState([
-    { ratio:0,          score:-20 },
-    { ratio:1/6,        score:-10 },
-    { ratio:2/6,        score:-5  },
-    { ratio:3/6,        score:0   },
-    { ratio:4/6,        score:5   },
-    { ratio:5/6,        score:15  },
-    { ratio:1,          score:40  },
+  const [winRatioScores, setWinRatioScores] = usePersist("gp:mmWinRatioScores", [
+    { ratio:0,                    score:-20 },
+    { ratio:0.16666666666666666,  score:-10 },
+    { ratio:0.3333333333333333,   score:-5  },
+    { ratio:0.5,                  score:0   },
+    { ratio:0.6666666666666666,   score:5   },
+    { ratio:0.8333333333333334,   score:15  },
+    { ratio:1,                    score:40  },
   ]);
-  const [lastGameBonus,   setLastGameBonus]   = useState({ win:10, lose:0 });
-  const [kFactors,        setKFactors]        = useState({ positive:1, negative:0.5 });
-  const [matchRange,      setMatchRange]      = useState({ maxPct:0.26, minPct:0.05 });
-  const [winLookback,     setWinLookback]     = useState(6);
-  const [avgLookback,     setAvgLookback]     = useState(10);
-  const [initialScore,    setInitialScore]    = useState(70);
-  const [lastMatchWeight, setLastMatchWeight] = useState(0.1);
+  const [lastGameBonus,   setLastGameBonus]   = usePersist("gp:mmLastGameBonus",   { win:10, lose:0 });
+  const [kFactors,        setKFactors]        = usePersist("gp:mmKFactors",        { positive:1, negative:0.5 });
+  const [matchRange,      setMatchRange]      = usePersist("gp:mmMatchRange",      { maxPct:0.26, minPct:0.05 });
+  const [winLookback,     setWinLookback]     = usePersist("gp:mmWinLookback",     6);
+  const [avgLookback,     setAvgLookback]     = usePersist("gp:mmAvgLookback",     10);
+  const [initialScore,    setInitialScore]    = usePersist("gp:mmInitialScore",    70);
+  const [lastMatchWeight, setLastMatchWeight] = usePersist("gp:mmLastMatchWeight", 0.1);
   const [poolStatus,      setPoolStatus]      = useState("Critical 🥵");
   const [realMoney,       setRealMoney]       = useState(true);
   const [numGames,        setNumGames]        = useState(50);
@@ -1965,10 +1985,10 @@ function calcPersonaSim(persona, rates, days, sortedMilestones) {
 
 function MissionsV2Page({ onBack, readOnly, history, setHistory, histNote, setHistNote }) {
   const [tab,      setTab]      = useState("config");
-  const [days,     setDays]     = useState(DEF_DAYS);
-  const [rates,    setRates]    = useState(DEF_RATES);
-  const [mstn,     setMstn]     = useState(DEF_MILESTONES);
-  const [personas, setPersonas] = useState(DEF_V2PERSONAS);
+  const [days,     setDays]     = usePersist("gp:m2Days",     DEF_DAYS);
+  const [rates,    setRates]    = usePersist("gp:m2Rates",    DEF_RATES);
+  const [mstn,     setMstn]     = usePersist("gp:m2Mstn",     DEF_MILESTONES);
+  const [personas, setPersonas] = usePersist("gp:m2Personas", DEF_V2PERSONAS);
   const [selPer,   setSelPer]   = useState(0);
   const [selPerBar,setSelPerBar]= useState(0);
   const [qaRes,    setQaRes]    = useState(null);
@@ -2463,8 +2483,8 @@ function MissionsV2Page({ onBack, readOnly, history, setHistory, histNote, setHi
 // APP ROOT
 // ══════════════════════════════════════════════════════════════════════════════
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [users,       setUsers]       = useState(SEED_USERS);
+  const [currentUser, setCurrentUser] = usePersist("gp:currentUser", null);
+  const [users,       setUsers]       = usePersist("gp:users", SEED_USERS);
   const [showAdmin,   setShowAdmin]   = useState(false);
 
   if (!currentUser) return <LoginScreen onLogin={setCurrentUser}/>;
@@ -2633,6 +2653,713 @@ const GOAL_LIBRARY = [
 ];
 
 let _nextTournGoalId = 500;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// OFFERS PAGE
+// ══════════════════════════════════════════════════════════════════════════════
+let _nextOfferId = 800;
+const CV = 1/1200; // chip value in dollars
+const r2o = v => Math.round((+v||0)*100)/100;
+const OFF_SEGS_LIST = ["Everyone","Payer","Non-Payer","New User","Whale","VIP","High Roller","Casual"];
+
+// ── Default datasets (from Offers.xlsx) ───────────────────────────────────────
+const DEF_CASH_RUSH = [
+  {id:1,name:"Cash Rush 1", cash:7, chips:2000,bonusCash:4,  cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+  {id:2,name:"Cash Rush 2", cash:5, chips:1000,bonusCash:3,  cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+  {id:3,name:"Cash Rush 3", cash:3, chips:500, bonusCash:2,  cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+  {id:4,name:"Cash Rush 4", cash:3, chips:0,   bonusCash:2,  cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+  {id:5,name:"Cash Rush 5", cash:6, chips:1000,bonusCash:3,  cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+  {id:6,name:"Cash Rush 6", cash:2, chips:500, bonusCash:2,  cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+  {id:7,name:"Cash Rush 7", cash:3, chips:750, bonusCash:2,  cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+  {id:8,name:"Cash Rush 8", cash:12,chips:1000,bonusCash:7,  cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+  {id:9,name:"Cash Rush 9", cash:15,chips:1250,bonusCash:10, cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+  {id:10,name:"Cash Rush 10",cash:6,chips:1000,bonusCash:2,  cap:1,timeHours:24,trigger:"Everyone",segments:["Cash Rush Event"],recurring:false},
+];
+const DEF_SPECIAL = [
+  {id:1,name:"Special Offer 1", cash:19.99,chips:1000,bonusCash:5,  cap:3,timeHours:72,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:2,name:"Special Offer 2", cash:5,   chips:500, bonusCash:2,  cap:3,timeHours:72,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:3,name:"Special Offer 3", cash:10,  chips:1000,bonusCash:3,  cap:3,timeHours:72,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:4,name:"Special Offer 4", cash:3,   chips:500, bonusCash:3,  cap:3,timeHours:72,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:5,name:"Special Offer 5", cash:3,   chips:1000,bonusCash:3,  cap:3,timeHours:72,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:6,name:"Special Offer 6", cash:10,  chips:1000,bonusCash:5,  cap:3,timeHours:72,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:7,name:"Special Offer 7", cash:4,   chips:1000,bonusCash:3,  cap:1,timeHours:48,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:8,name:"Special Offer 8", cash:6,   chips:1000,bonusCash:4,  cap:2,timeHours:48,trigger:"Everyone",segments:["Everyone"],recurring:false},
+];
+const DEF_1PLUS1 = [
+  {id:1,name:"1+1 Offer 1", cash:10,buyChips:2000,buyBonusCash:3,freeChips:1000,freeBonusCash:4, cap:1,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:2,name:"1+1 Offer 2", cash:6, buyChips:1000,buyBonusCash:2,freeChips:1000,freeBonusCash:3, cap:2,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:3,name:"1+1 Offer 3", cash:15,buyChips:1000,buyBonusCash:4,freeChips:1000,freeBonusCash:5, cap:1,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:4,name:"1+1 Offer 4", cash:5, buyChips:1000,buyBonusCash:2,freeChips:1000,freeBonusCash:2, cap:3,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:5,name:"1+1 Offer 5", cash:7, buyChips:500, buyBonusCash:3,freeChips:1500,freeBonusCash:2, cap:2,trigger:"Everyone",segments:["Everyone"],recurring:false},
+  {id:6,name:"1+1 Offer 6", cash:9, buyChips:1000,buyBonusCash:3,freeChips:2000,freeBonusCash:3, cap:3,trigger:"Everyone",segments:["Everyone"],recurring:false},
+];
+const DEF_ROLLING = [
+  {id:1,name:"Rolling 1 — Non-Payer",segment:"Non-Payer",recurring:false,segments:["Non-Payer"],steps:[
+    {step:1,cash:1, chips:0,   bonusCash:1,   isFree:false,cap:1},
+    {step:2,cash:0, chips:1000,bonusCash:1,   isFree:true, cap:1},
+    {step:3,cash:0, chips:1000,bonusCash:1,   isFree:true, cap:1},
+    {step:4,cash:3, chips:0,   bonusCash:3,   isFree:false,cap:1},
+    {step:5,cash:0, chips:1000,bonusCash:2,   isFree:true, cap:1},
+    {step:6,cash:2, chips:500, bonusCash:1,   isFree:false,cap:1},
+    {step:7,cash:0, chips:300, bonusCash:1,   isFree:true, cap:1},
+    {step:8,cash:6, chips:0,   bonusCash:6,   isFree:false,cap:1},
+    {step:9,cash:0, chips:2000,bonusCash:1,   isFree:true, cap:1},
+    {step:10,cash:10,chips:1000,bonusCash:2,  isFree:false,cap:1},
+  ]},
+  {id:2,name:"Rolling 2 — Payer",segment:"Payer",recurring:false,segments:["Payer"],steps:[
+    {step:1,cash:4, chips:0,   bonusCash:4,   isFree:false,cap:1},
+    {step:2,cash:0, chips:0,   bonusCash:4,   isFree:true, cap:1},
+    {step:3,cash:0, chips:2000,bonusCash:2,   isFree:true, cap:1},
+    {step:4,cash:3, chips:0,   bonusCash:3,   isFree:false,cap:1},
+    {step:5,cash:0, chips:0,   bonusCash:3,   isFree:true, cap:1},
+    {step:6,cash:3, chips:1000,bonusCash:2,   isFree:false,cap:1},
+    {step:7,cash:0, chips:500, bonusCash:1.5, isFree:true, cap:1},
+    {step:8,cash:6, chips:0,   bonusCash:2,   isFree:false,cap:1},
+    {step:9,cash:0, chips:2000,bonusCash:2,   isFree:true, cap:1},
+    {step:10,cash:10,chips:1000,bonusCash:2,  isFree:false,cap:1},
+  ]},
+];
+const DEF_BUYALL = [
+  {id:1,name:"Buy All 1",segments:["Everyone"],recurring:false,nonPayer:[
+    {step:1,price:1,  bonusCash:0.5,chips:250},
+    {step:2,price:1.5,bonusCash:0.5,chips:500},
+    {step:3,price:2,  bonusCash:1,  chips:500},
+    {step:4,price:3.5,bonusCash:2,  chips:1250},
+  ],payer:[
+    {step:1,price:3,  bonusCash:0.5,chips:250},
+    {step:2,price:6,  bonusCash:2,  chips:500},
+    {step:3,price:8,  bonusCash:3,  chips:500},
+    {step:4,price:12, bonusCash:5.5,chips:1250},
+  ]},
+  {id:2,name:"Buy All 2",segments:["Everyone"],recurring:false,nonPayer:[
+    {step:1,price:4,  bonusCash:1,  chips:500},
+    {step:2,price:5,  bonusCash:2,  chips:500},
+    {step:3,price:3,  bonusCash:0.5,chips:250},
+    {step:4,price:7,  bonusCash:3.5,chips:1250},
+  ],payer:[
+    {step:1,price:5,  bonusCash:2,  chips:250},
+    {step:2,price:6,  bonusCash:3,  chips:500},
+    {step:3,price:9,  bonusCash:4,  chips:500},
+    {step:4,price:14, bonusCash:9,  chips:1250},
+  ]},
+];
+const DEF_BEGINNERS = [
+  {id:1,name:"Beginners Pack",cash:6,chips:3,bonusCash:0,cap:1,timeHours:24,trigger:"After FTUE",segments:["New User"],recurring:false},
+];
+
+// ── AI Insight Engine ─────────────────────────────────────────────────────────
+function offerAI(o, type) {
+  const tips = [];
+  const totalVal = (o.cash||0) + (o.bonusCash||0) + ((o.chips||0)*CV) + ((o.buyChips||0)*CV) + (o.buyBonusCash||0) + ((o.freeChips||0)*CV) + (o.freeBonusCash||0);
+  const price = o.cash || 1;
+  const vpr = r2o(totalVal / price);
+  const bcRatio = (o.bonusCash||0) / price;
+
+  if (vpr >= 2.0)       tips.push({c:"#68d391", t:"Strong value ratio ("+vpr+"×) — high conversion potential, good for acquisition"});
+  else if (vpr >= 1.5)  tips.push({c:"#90cdf4", t:"Healthy ratio ("+vpr+"×) — balanced offer for broad audience"});
+  else if (vpr > 0)     tips.push({c:"#f6ad55", t:"Low ratio ("+vpr+"×) — consider increasing rewards to improve conversion"});
+
+  if (bcRatio >= 0.5)   tips.push({c:"#b794f4", t:"B.Cash dominant ("+Math.round(bcRatio*100)+"% of price) — best for retention & re-engagement campaigns"});
+  else if (bcRatio > 0) tips.push({c:"#63b3ed", t:"Moderate B.Cash — good general audience appeal"});
+
+  if ((o.chips||0) >= 2000 || (o.buyChips||0) >= 2000)
+                        tips.push({c:"#f6ad55", t:"High chip count — strong appeal for engagement-focused / casual spenders"});
+
+  if (type === "standard" || type === "special") {
+    const h = parseFloat(o.timeHours)||24;
+    if (h <= 2)         tips.push({c:"#fc8181", t:"Flash offer (≤ 2h) — maximum urgency, pair with push notification"});
+    else if (h <= 24)   tips.push({c:"#f6ad55", t:"Short window ("+h+"h) — creates FOMO urgency, good for win-back"});
+    else                tips.push({c:"#718096", t:"Extended window ("+h+"h) — lower urgency, suitable for casual consideration"});
+  }
+
+  const cap = parseInt(o.cap)||1;
+  if (cap >= 3)         tips.push({c:"#f687b3", t:"CAP "+cap+" — well-suited for whale/VIP segments, drives repeat spend"});
+  else if (cap === 1)   tips.push({c:"#718096", t:"Single purchase — one-time scarcity mechanic, drives urgency"});
+
+  const segs = o.segments || [];
+  if (segs.includes("Non-Payer") || segs.includes("Everyone")) {
+    if (vpr < 1.6 && price > 5) tips.push({c:"#fc8181", t:"For non-payers at this price: value ratio may be too low — try 1.7×+ to drive first purchase"});
+  }
+  if (segs.includes("New User"))
+    tips.push({c:"#68d391", t:"New user targeting: keep price under $7 and lead with B.Cash for best conversion"});
+
+  if (type === "1plus1")
+    tips.push({c:"#90cdf4", t:"'Free' reward creates perceived double-value — emphasize the free item in creative assets"});
+
+  if (type === "rolling")
+    tips.push({c:"#63b3ed", t:"Free steps maintain engagement between paid steps — keep free steps ≤ 40% of total to sustain revenue"});
+
+  return tips.slice(0, 4);
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+function SegmentPills({ segs, onChange, readOnly }) {
+  const [adding, setAdding] = useState(false);
+  const [custom, setCustom] = useState("");
+  const available = OFF_SEGS_LIST.filter(s => !segs.includes(s));
+  return (
+    <div style={{display:"flex",flexWrap:"wrap",gap:"4px",alignItems:"center"}}>
+      {segs.map(s => (
+        <span key={s} style={{display:"flex",alignItems:"center",gap:"3px",padding:"2px 7px",background:"#2c3a5a",border:"1px solid #3d5a8a",borderRadius:"10px",fontSize:"10px",color:"#90cdf4",fontWeight:600}}>
+          {s}
+          {!readOnly && <span onClick={()=>onChange(segs.filter(x=>x!==s))} style={{cursor:"pointer",color:"#4a5568",marginLeft:"2px",fontSize:"11px",lineHeight:1}}>×</span>}
+        </span>
+      ))}
+      {!readOnly && !adding && (
+        <button onClick={()=>setAdding(true)} style={{padding:"2px 7px",background:"#141820",border:"1px dashed #2d3748",borderRadius:"10px",color:"#4a5568",fontSize:"10px",cursor:"pointer"}}>+ seg</button>
+      )}
+      {!readOnly && adding && (
+        <div style={{display:"flex",gap:"4px",alignItems:"center"}}>
+          <select value="" onChange={e=>{if(e.target.value){onChange([...segs,e.target.value]);setAdding(false);}}}
+            style={{padding:"2px 5px",background:"#1a2035",border:"1px solid #2d3748",borderRadius:"6px",color:"#e2e8f0",fontSize:"10px"}}>
+            <option value="">— pick —</option>
+            {available.map(s=><option key={s} value={s}>{s}</option>)}
+            <option value="__custom">+ Custom…</option>
+          </select>
+          {custom !== undefined && (
+            <><input value={custom} onChange={e=>setCustom(e.target.value)} placeholder="custom…"
+              style={{width:70,padding:"2px 5px",background:"#0f1117",border:"1px solid #2d3748",borderRadius:"5px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}/>
+              <button onClick={()=>{if(custom.trim()){onChange([...segs,custom.trim()]);setCustom("");setAdding(false);}}}
+                style={{padding:"2px 6px",background:"#276749",border:"none",borderRadius:"5px",color:"#fff",fontSize:"10px",cursor:"pointer"}}>✓</button>
+            </>
+          )}
+          <button onClick={()=>setAdding(false)} style={{padding:"2px 6px",background:"transparent",border:"1px solid #2d3748",borderRadius:"5px",color:"#718096",fontSize:"10px",cursor:"pointer"}}>✕</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AIPopover({ tips }) {
+  const [open, setOpen] = useState(false);
+  if (!tips.length) return null;
+  const topColor = tips[0].c;
+  return (
+    <div style={{position:"relative",display:"inline-block"}}>
+      <button onClick={()=>setOpen(o=>!o)}
+        style={{padding:"3px 8px",background:topColor+"22",border:"1px solid "+topColor+"44",borderRadius:"8px",color:topColor,fontSize:"10px",cursor:"pointer",fontWeight:700,whiteSpace:"nowrap"}}>
+        🤖 {tips.length} tip{tips.length>1?"s":""}
+      </button>
+      {open && (
+        <div style={{position:"absolute",right:0,top:"calc(100% + 4px)",width:260,background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"10px",zIndex:999,boxShadow:"0 8px 24px #0006"}}>
+          <div style={{fontSize:"10px",color:"#4a5568",fontWeight:700,marginBottom:"6px"}}>🤖 AI INSIGHTS</div>
+          {tips.map((t,i)=>(
+            <div key={i} style={{display:"flex",gap:"6px",marginBottom:"6px",fontSize:"11px",lineHeight:1.4}}>
+              <span style={{width:8,minWidth:8,height:8,borderRadius:"50%",background:t.c,marginTop:3}}/>
+              <span style={{color:"#a0aec0"}}>{t.t}</span>
+            </div>
+          ))}
+          <button onClick={()=>setOpen(false)} style={{marginTop:"4px",padding:"3px 8px",background:"transparent",border:"1px solid #2d3748",borderRadius:"5px",color:"#718096",fontSize:"10px",cursor:"pointer",width:"100%"}}>Close</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Standard Offer Table (Cash Rush / Special / Beginners) ────────────────────
+function StandardOfferTab({ offers, setOffers, type, accent, readOnly }) {
+  const tdS = {padding:"4px 6px",fontSize:"11px",color:"#a0aec0",borderBottom:"1px solid #1a1f30"};
+  const inp = (w) => ({width:w,padding:"3px 6px",background:"#0f1117",border:"1px solid #2d3748",borderRadius:"5px",color:"#e2e8f0",fontSize:"11px",outline:"none"});
+  const compVal = o => r2o((o.cash||0)+(o.bonusCash||0)+((o.chips||0)*CV));
+  const compVPD = o => { const v=compVal(o); return v>0?r2o(v/(o.cash||1)):0; };
+
+  const addRow = () => setOffers(p=>[...p,{id:_nextOfferId++,name:(type==="cashRush"?"Cash Rush":"type"==="special"?"Special Offer":"Offer")+" "+(p.length+1),cash:5,chips:500,bonusCash:2,cap:1,timeHours:24,trigger:"Everyone",segments:["Everyone"],recurring:false}]);
+  const upd = (id,k,v) => setOffers(p=>p.map(o=>o.id!==id?o:{...o,[k]:k==="name"||k==="trigger"||k==="recurring"?v:+v||0}));
+  const updSegs = (id,s) => setOffers(p=>p.map(o=>o.id!==id?o:{...o,segments:s}));
+
+  const buildJSON = () => ({type,version:"1.0",offers:offers.map(o=>({id:o.name.toLowerCase().replace(/\s+/g,"_"),name:o.name,price:o.cash,rewards:{chips:o.chips,bonusCash:o.bonusCash},totalValue:compVal(o),valuePer1Dollar:compVPD(o),cap:o.cap,durationHours:o.timeHours,trigger:o.trigger,segments:o.segments,recurring:o.recurring}))});
+  const expCSV = () => downloadCSV(offers.map(o=>({Name:o.name,Cash:o.cash,Chips:o.chips,"Bonus Cash":o.bonusCash,"Total Value":compVal(o),"Value/$1":compVPD(o),CAP:o.cap,"Time(h)":o.timeHours,Trigger:o.trigger,Segments:(o.segments||[]).join("|"),Recurring:o.recurring?"Yes":"No"})),type+"_offers.csv");
+
+  const chartData = offers.map(o=>({name:o.name.replace(/[A-Za-z\s]+/,"").trim()||o.name,"Value/$1":compVPD(o),"Cash":o.cash,"B.Cash":o.bonusCash,"Chips $":r2o((o.chips||0)*CV)}));
+
+  const [copied,setCopied] = useState(false);
+  const copyJSON = () => { const j=buildJSON(); navigator.clipboard?.writeText(JSON.stringify(j,null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
+
+  return (
+    <div>
+      {/* Config Table */}
+      <div style={{overflowX:"auto",marginBottom:"16px"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:"11px"}}>
+          <thead>
+            <tr style={{background:"#141820"}}>
+              {["#","Name","Cash ($)","Chips","B.Cash","Total Val","Val/$1","CAP","Time(h)","Trigger","Segments","Recurring","AI",""].map(h=>(
+                <th key={h} style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,textAlign:"left",whiteSpace:"nowrap",fontSize:"10px"}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {offers.map((o,i)=>{
+              const v=compVal(o), vpd=compVPD(o);
+              const vCol = vpd>=2?"#68d391":vpd>=1.5?"#90cdf4":"#f6ad55";
+              return (
+                <tr key={o.id} style={{background:i%2===0?"#0f1117":"#111827"}}>
+                  <td style={tdS}>{i+1}</td>
+                  <td style={tdS}><input value={o.name} onChange={e=>upd(o.id,"name",e.target.value)} disabled={readOnly} style={{...inp(110)}}/></td>
+                  <td style={tdS}><input type="number" value={o.cash} onChange={e=>upd(o.id,"cash",e.target.value)} disabled={readOnly} style={{...inp(55)}}/></td>
+                  <td style={tdS}><input type="number" value={o.chips} onChange={e=>upd(o.id,"chips",e.target.value)} disabled={readOnly} style={{...inp(60)}}/></td>
+                  <td style={tdS}><input type="number" step="0.1" value={o.bonusCash} onChange={e=>upd(o.id,"bonusCash",e.target.value)} disabled={readOnly} style={{...inp(55)}}/></td>
+                  <td style={{...tdS,color:"#e2e8f0",fontWeight:700}}>${r2o(v).toFixed(2)}</td>
+                  <td style={{...tdS,color:vCol,fontWeight:700}}>{vpd.toFixed(2)}×</td>
+                  <td style={tdS}><input type="number" min="1" value={o.cap} onChange={e=>upd(o.id,"cap",e.target.value)} disabled={readOnly} style={{...inp(40)}}/></td>
+                  <td style={tdS}><input type="number" value={o.timeHours} onChange={e=>upd(o.id,"timeHours",e.target.value)} disabled={readOnly} style={{...inp(50)}}/></td>
+                  <td style={tdS}><input value={o.trigger} onChange={e=>upd(o.id,"trigger",e.target.value)} disabled={readOnly} style={{...inp(80)}}/></td>
+                  <td style={{...tdS,minWidth:120}}><SegmentPills segs={o.segments||[]} onChange={s=>updSegs(o.id,s)} readOnly={readOnly}/></td>
+                  <td style={tdS}>
+                    <select value={o.recurring?"Yes":"No"} onChange={e=>upd(o.id,"recurring",e.target.value==="Yes")} disabled={readOnly}
+                      style={{padding:"3px 5px",background:"#0f1117",border:"1px solid #2d3748",borderRadius:"5px",color:"#e2e8f0",fontSize:"10px"}}>
+                      <option>No</option><option>Yes</option>
+                    </select>
+                  </td>
+                  <td style={tdS}><AIPopover tips={offerAI(o,"standard")}/></td>
+                  <td style={tdS}>
+                    {!readOnly && <button onClick={()=>setOffers(p=>p.filter(x=>x.id!==o.id))} style={{padding:"2px 8px",background:"#2d1a1a",border:"1px solid #9b2c2c",borderRadius:"5px",color:"#fc8181",fontSize:"10px",cursor:"pointer"}}>✕</button>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {!readOnly && <button onClick={addRow} style={{padding:"6px 14px",background:"#1e2a45",border:"1px solid #2d3748",borderRadius:"7px",color:"#90cdf4",fontSize:"11px",cursor:"pointer",marginBottom:"16px",fontWeight:600}}>+ Add Offer</button>}
+
+      {/* Charts */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"16px"}}>
+        <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+          <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>VALUE / $1 BY OFFER</div>
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={chartData} margin={{top:0,right:10,left:-20,bottom:20}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+              <XAxis dataKey="name" tick={{fontSize:8,fill:"#4a5568"}} angle={-35} textAnchor="end"/>
+              <YAxis tick={{fontSize:9,fill:"#4a5568"}}/>
+              <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}}/>
+              <ReferenceLine y={1.5} stroke="#f6ad55" strokeDasharray="4 2" label={{value:"1.5×",fill:"#f6ad55",fontSize:9}}/>
+              <Bar dataKey="Value/$1" fill={accent} radius={[3,3,0,0]}>
+                {chartData.map((c,i)=><Cell key={i} fill={c["Value/$1"]>=2?"#68d391":c["Value/$1"]>=1.5?"#90cdf4":"#f6ad55"}/>)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+          <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>REWARD COMPOSITION</div>
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={chartData} margin={{top:0,right:10,left:-20,bottom:20}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+              <XAxis dataKey="name" tick={{fontSize:8,fill:"#4a5568"}} angle={-35} textAnchor="end"/>
+              <YAxis tick={{fontSize:9,fill:"#4a5568"}}/>
+              <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}}/>
+              <Legend wrapperStyle={{fontSize:9}}/>
+              <Bar dataKey="Cash" stackId="a" fill="#63b3ed"/>
+              <Bar dataKey="B.Cash" stackId="a" fill="#b794f4"/>
+              <Bar dataKey="Chips $" stackId="a" fill="#f6ad55" radius={[3,3,0,0]}/>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Export */}
+      <div style={{display:"flex",gap:"8px"}}>
+        <button onClick={expCSV} style={{padding:"8px 16px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>⬇ CSV</button>
+        <button onClick={copyJSON} style={{padding:"8px 16px",background:copied?"#276749":"#2c3a5a",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{copied?"✅ Copied":"📋 Copy JSON"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── 1+1 Offer Tab ─────────────────────────────────────────────────────────────
+function OnePlus1Tab({ offers, setOffers, readOnly }) {
+  const tdS = {padding:"4px 6px",fontSize:"11px",color:"#a0aec0",borderBottom:"1px solid #1a1f30"};
+  const inp = (w) => ({width:w,padding:"3px 6px",background:"#0f1117",border:"1px solid #2d3748",borderRadius:"5px",color:"#e2e8f0",fontSize:"11px",outline:"none"});
+  const compVal = o => r2o((o.cash||0)+(o.buyBonusCash||0)+((o.buyChips||0)*CV)+(o.freeBonusCash||0)+((o.freeChips||0)*CV));
+  const compVPD = o => { const v=compVal(o); return v>0?r2o(v/(o.cash||1)):0; };
+
+  const upd = (id,k,v) => setOffers(p=>p.map(o=>o.id!==id?o:{...o,[k]:k==="name"||k==="trigger"?v:+v||0}));
+  const addRow = () => setOffers(p=>[...p,{id:_nextOfferId++,name:"1+1 Offer "+(p.length+1),cash:5,buyChips:500,buyBonusCash:2,freeChips:500,freeBonusCash:1,cap:1,trigger:"Everyone",segments:["Everyone"],recurring:false}]);
+
+  const buildJSON = () => ({type:"oneForOne",version:"1.0",offers:offers.map(o=>({id:o.name.toLowerCase().replace(/\s+/g,"_"),name:o.name,price:o.cash,purchase:{chips:o.buyChips,bonusCash:o.buyBonusCash},free:{chips:o.freeChips,bonusCash:o.freeBonusCash},totalValue:compVal(o),valuePer1Dollar:compVPD(o),cap:o.cap,trigger:o.trigger,segments:o.segments,recurring:o.recurring}))});
+  const expCSV = () => downloadCSV(offers.map(o=>({Name:o.name,"Price($)":o.cash,"Buy Chips":o.buyChips,"Buy B.Cash":o.buyBonusCash,"Free Chips":o.freeChips,"Free B.Cash":o.freeBonusCash,"Total Val":compVal(o),"Val/$1":compVPD(o),CAP:o.cap,Segments:(o.segments||[]).join("|")})),"1plus1_offers.csv");
+
+  const chartData = offers.map(o=>({name:o.name.replace(/1\+1 Offer /,"#"),"Val/$1":compVPD(o),"Buy B.Cash":o.buyBonusCash,"Free B.Cash":o.freeBonusCash}));
+  const [copied,setCopied] = useState(false);
+  const copyJSON = () => { navigator.clipboard?.writeText(JSON.stringify(buildJSON(),null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
+
+  return (
+    <div>
+      <div style={{overflowX:"auto",marginBottom:"14px"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:"11px"}}>
+          <thead>
+            <tr style={{background:"#141820"}}>
+              <th style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,fontSize:10,textAlign:"left"}}>#</th>
+              <th style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,fontSize:10,textAlign:"left"}}>Name</th>
+              <th style={{padding:"6px 8px",color:"#63b3ed",fontWeight:700,fontSize:10}}>Price ($)</th>
+              <th style={{padding:"6px 8px",color:"#63b3ed",fontWeight:700,fontSize:10}}>BUY Chips</th>
+              <th style={{padding:"6px 8px",color:"#63b3ed",fontWeight:700,fontSize:10}}>BUY B.Cash</th>
+              <th style={{padding:"6px 8px",color:"#68d391",fontWeight:700,fontSize:10}}>FREE Chips</th>
+              <th style={{padding:"6px 8px",color:"#68d391",fontWeight:700,fontSize:10}}>FREE B.Cash</th>
+              <th style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,fontSize:10}}>Total Val</th>
+              <th style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,fontSize:10}}>Val/$1</th>
+              <th style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,fontSize:10}}>CAP</th>
+              <th style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,fontSize:10}}>Segments</th>
+              <th style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,fontSize:10}}>AI</th>
+              <th/>
+            </tr>
+          </thead>
+          <tbody>
+            {offers.map((o,i)=>{
+              const v=compVal(o), vpd=compVPD(o);
+              const vc = vpd>=2?"#68d391":vpd>=1.5?"#90cdf4":"#f6ad55";
+              return (
+                <tr key={o.id} style={{background:i%2===0?"#0f1117":"#111827"}}>
+                  <td style={tdS}>{i+1}</td>
+                  <td style={tdS}><input value={o.name} onChange={e=>upd(o.id,"name",e.target.value)} disabled={readOnly} style={inp(100)}/></td>
+                  <td style={tdS}><input type="number" value={o.cash} onChange={e=>upd(o.id,"cash",e.target.value)} disabled={readOnly} style={inp(50)}/></td>
+                  <td style={tdS}><input type="number" value={o.buyChips} onChange={e=>upd(o.id,"buyChips",e.target.value)} disabled={readOnly} style={inp(60)}/></td>
+                  <td style={tdS}><input type="number" step="0.1" value={o.buyBonusCash} onChange={e=>upd(o.id,"buyBonusCash",e.target.value)} disabled={readOnly} style={inp(55)}/></td>
+                  <td style={tdS}><input type="number" value={o.freeChips} onChange={e=>upd(o.id,"freeChips",e.target.value)} disabled={readOnly} style={inp(60)}/></td>
+                  <td style={tdS}><input type="number" step="0.1" value={o.freeBonusCash} onChange={e=>upd(o.id,"freeBonusCash",e.target.value)} disabled={readOnly} style={inp(55)}/></td>
+                  <td style={{...tdS,fontWeight:700,color:"#e2e8f0"}}>${r2o(v).toFixed(2)}</td>
+                  <td style={{...tdS,fontWeight:700,color:vc}}>{vpd.toFixed(2)}×</td>
+                  <td style={tdS}><input type="number" min="1" value={o.cap} onChange={e=>upd(o.id,"cap",e.target.value)} disabled={readOnly} style={inp(40)}/></td>
+                  <td style={{...tdS,minWidth:110}}><SegmentPills segs={o.segments||[]} onChange={s=>setOffers(p=>p.map(x=>x.id!==o.id?x:{...x,segments:s}))} readOnly={readOnly}/></td>
+                  <td style={tdS}><AIPopover tips={offerAI(o,"1plus1")}/></td>
+                  <td style={tdS}>{!readOnly&&<button onClick={()=>setOffers(p=>p.filter(x=>x.id!==o.id))} style={{padding:"2px 8px",background:"#2d1a1a",border:"1px solid #9b2c2c",borderRadius:"5px",color:"#fc8181",fontSize:"10px",cursor:"pointer"}}>✕</button>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {!readOnly && <button onClick={addRow} style={{padding:"6px 14px",background:"#1e2a45",border:"1px solid #2d3748",borderRadius:"7px",color:"#90cdf4",fontSize:"11px",cursor:"pointer",marginBottom:"14px",fontWeight:600}}>+ Add Offer</button>}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"14px"}}>
+        <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+          <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>VALUE / $1 COMPARISON</div>
+          <ResponsiveContainer width="100%" height={150}>
+            <BarChart data={chartData} margin={{top:0,right:10,left:-20,bottom:20}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+              <XAxis dataKey="name" tick={{fontSize:8,fill:"#4a5568"}} angle={-35} textAnchor="end"/>
+              <YAxis tick={{fontSize:9,fill:"#4a5568"}}/>
+              <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}}/>
+              <ReferenceLine y={2} stroke="#68d391" strokeDasharray="4 2"/>
+              <Bar dataKey="Val/$1" radius={[3,3,0,0]}>
+                {chartData.map((c,i)=><Cell key={i} fill={c["Val/$1"]>=2?"#68d391":c["Val/$1"]>=1.5?"#90cdf4":"#f6ad55"}/>)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+          <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>BUY vs FREE B.CASH</div>
+          <ResponsiveContainer width="100%" height={150}>
+            <BarChart data={chartData} margin={{top:0,right:10,left:-20,bottom:20}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+              <XAxis dataKey="name" tick={{fontSize:8,fill:"#4a5568"}} angle={-35} textAnchor="end"/>
+              <YAxis tick={{fontSize:9,fill:"#4a5568"}}/>
+              <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}}/>
+              <Legend wrapperStyle={{fontSize:9}}/>
+              <Bar dataKey="Buy B.Cash" fill="#63b3ed"/>
+              <Bar dataKey="Free B.Cash" fill="#68d391"/>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:"8px"}}>
+        <button onClick={expCSV} style={{padding:"8px 16px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>⬇ CSV</button>
+        <button onClick={copyJSON} style={{padding:"8px 16px",background:copied?"#276749":"#2c3a5a",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{copied?"✅ Copied":"📋 Copy JSON"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Rolling Offer Tab ─────────────────────────────────────────────────────────
+function RollingTab({ offers, setOffers, readOnly }) {
+  const [selId, setSelId] = useState(offers[0]?.id);
+  const sel = offers.find(o=>o.id===selId) || offers[0];
+  if (!sel) return null;
+
+  const tdS = {padding:"4px 6px",fontSize:"11px",color:"#a0aec0",borderBottom:"1px solid #1a1f30"};
+  const inp = (w) => ({width:w,padding:"3px 6px",background:"#0f1117",border:"1px solid #2d3748",borderRadius:"5px",color:"#e2e8f0",fontSize:"11px",outline:"none"});
+
+  const updStep = (sid, k, v) => setOffers(p=>p.map(o=>o.id!==sel.id?o:{...o,steps:o.steps.map(s=>s.step!==sid?s:{...s,[k]:k==="isFree"?v:(+v||0)})}));
+  const addStep = () => setOffers(p=>p.map(o=>o.id!==sel.id?o:{...o,steps:[...o.steps,{step:o.steps.length+1,cash:2,chips:0,bonusCash:1,isFree:false,cap:1}]}));
+  const delStep = (sid) => setOffers(p=>p.map(o=>o.id!==sel.id?o:{...o,steps:o.steps.filter(s=>s.step!==sid).map((s,i)=>({...s,step:i+1}))}));
+  const addOffer = () => { const nid=_nextOfferId++; setOffers(p=>[...p,{id:nid,name:"Rolling "+(p.length+1),segment:"Everyone",recurring:false,segments:["Everyone"],steps:[{step:1,cash:2,chips:0,bonusCash:1,isFree:false,cap:1},{step:2,cash:0,chips:500,bonusCash:0,isFree:true,cap:1}]}]); setSelId(nid); };
+
+  // compute cumulative values
+  const stepsWithCalc = sel.steps.map((s,i)=>{
+    const val = s.isFree ? 0 : (s.cash||0);
+    const rewVal = r2o((s.bonusCash||0)+((s.chips||0)*CV));
+    const prev = i===0?0:sel.steps.slice(0,i).filter(x=>!x.isFree).reduce((a,x)=>a+(x.cash||0),0);
+    const totalCost = prev + (s.isFree?0:s.cash);
+    return {...s, val, rewVal, totalCost};
+  });
+
+  const buildJSON = () => ({type:"rollingOffer",version:"1.0",offers:offers.map(o=>({id:o.name.toLowerCase().replace(/\s+/g,"_"),name:o.name,segment:o.segment,segments:o.segments,recurring:o.recurring,steps:o.steps.map(s=>({step:s.step,price:s.isFree?0:s.cash,chips:s.chips,bonusCash:s.bonusCash,isFree:s.isFree,cap:s.cap}))}))});
+  const expCSV = () => downloadCSV(sel.steps.map(s=>({Offer:sel.name,Step:s.step,Price:s.isFree?0:s.cash,Chips:s.chips,"B.Cash":s.bonusCash,"Is Free":s.isFree?"Yes":"No",CAP:s.cap})),"rolling_offer.csv");
+  const [copied,setCopied] = useState(false);
+  const copyJSON = () => { navigator.clipboard?.writeText(JSON.stringify(buildJSON(),null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
+
+  const stepChart = stepsWithCalc.map(s=>({step:"S"+s.step,"Price":s.isFree?0:s.cash,"B.Cash":s.bonusCash,"Chips$":r2o((s.chips||0)*CV)}));
+  const cumChart  = stepsWithCalc.map((s,i)=>({step:"S"+(i+1),cumCost:r2o(s.totalCost)}));
+
+  return (
+    <div>
+      {/* Offer selector */}
+      <div style={{display:"flex",gap:"8px",marginBottom:"14px",flexWrap:"wrap",alignItems:"center"}}>
+        {offers.map(o=>(
+          <button key={o.id} onClick={()=>setSelId(o.id)} style={{padding:"6px 14px",background:o.id===selId?"#2c5282":"#1e2a45",border:"1px solid "+(o.id===selId?"#63b3ed":"#2d3748"),borderRadius:"8px",color:o.id===selId?"#90cdf4":"#718096",fontSize:"11px",cursor:"pointer",fontWeight:600}}>
+            {o.name}
+          </button>
+        ))}
+        {!readOnly && <button onClick={addOffer} style={{padding:"6px 12px",background:"#141820",border:"1px dashed #2d3748",borderRadius:"8px",color:"#4a5568",fontSize:"11px",cursor:"pointer"}}>+ New Offer</button>}
+      </div>
+
+      {/* Offer meta */}
+      <div style={{display:"flex",gap:"12px",marginBottom:"12px",alignItems:"center",flexWrap:"wrap"}}>
+        <div style={{fontSize:"11px",color:"#718096"}}>Segments:</div>
+        <SegmentPills segs={sel.segments||[]} onChange={s=>setOffers(p=>p.map(o=>o.id!==sel.id?o:{...o,segments:s,segment:s[0]||"Everyone"}))} readOnly={readOnly}/>
+        <div style={{fontSize:"11px",color:"#718096",marginLeft:8}}>Recurring:</div>
+        <select value={sel.recurring?"Yes":"No"} onChange={e=>setOffers(p=>p.map(o=>o.id!==sel.id?o:{...o,recurring:e.target.value==="Yes"}))} disabled={readOnly}
+          style={{padding:"3px 6px",background:"#1a2035",border:"1px solid #2d3748",borderRadius:"5px",color:"#e2e8f0",fontSize:"11px"}}>
+          <option>No</option><option>Yes</option>
+        </select>
+        <AIPopover tips={offerAI({segments:sel.segments},"rolling")}/>
+      </div>
+
+      {/* Steps table */}
+      <div style={{overflowX:"auto",marginBottom:"14px"}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead>
+            <tr style={{background:"#141820"}}>
+              {["Step","Free?","Price ($)","Chips","B.Cash","Rew Val","CAP",""].map(h=><th key={h} style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,fontSize:10,textAlign:"left"}}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {stepsWithCalc.map((s,i)=>(
+              <tr key={s.step} style={{background:s.isFree?"#0d1a12":"#0f1117"}}>
+                <td style={{...tdS,fontWeight:700,color:"#a0aec0"}}>Step {s.step}</td>
+                <td style={tdS}>
+                  <button onClick={()=>!readOnly&&updStep(s.step,"isFree",!s.isFree)}
+                    style={{padding:"2px 10px",background:s.isFree?"#276749":"#1e2a45",border:"1px solid "+(s.isFree?"#2f855a":"#2d3748"),borderRadius:"6px",color:s.isFree?"#9ae6b4":"#718096",fontSize:"10px",cursor:readOnly?"default":"pointer",fontWeight:700}}>
+                    {s.isFree?"FREE":"PAID"}
+                  </button>
+                </td>
+                <td style={tdS}>{s.isFree?<span style={{color:"#276749",fontSize:10}}>—</span>:<input type="number" value={s.cash} onChange={e=>updStep(s.step,"cash",e.target.value)} disabled={readOnly} style={inp(50)}/>}</td>
+                <td style={tdS}><input type="number" value={s.chips} onChange={e=>updStep(s.step,"chips",e.target.value)} disabled={readOnly} style={inp(60)}/></td>
+                <td style={tdS}><input type="number" step="0.1" value={s.bonusCash} onChange={e=>updStep(s.step,"bonusCash",e.target.value)} disabled={readOnly} style={inp(55)}/></td>
+                <td style={{...tdS,color:"#b794f4",fontWeight:700}}>${s.rewVal.toFixed(2)}</td>
+                <td style={tdS}><input type="number" min="1" value={s.cap} onChange={e=>updStep(s.step,"cap",e.target.value)} disabled={readOnly} style={inp(40)}/></td>
+                <td style={tdS}>{!readOnly&&<button onClick={()=>delStep(s.step)} style={{padding:"2px 7px",background:"#2d1a1a",border:"1px solid #9b2c2c",borderRadius:"5px",color:"#fc8181",fontSize:"10px",cursor:"pointer"}}>✕</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!readOnly && <button onClick={addStep} style={{padding:"6px 14px",background:"#1e2a45",border:"1px solid #2d3748",borderRadius:"7px",color:"#90cdf4",fontSize:"11px",cursor:"pointer",marginBottom:"14px",fontWeight:600}}>+ Add Step</button>}
+
+      {/* Charts */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"14px"}}>
+        <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+          <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>REWARDS PER STEP</div>
+          <ResponsiveContainer width="100%" height={150}>
+            <BarChart data={stepChart} margin={{top:0,right:8,left:-20,bottom:0}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+              <XAxis dataKey="step" tick={{fontSize:9,fill:"#4a5568"}}/>
+              <YAxis tick={{fontSize:9,fill:"#4a5568"}}/>
+              <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}}/>
+              <Legend wrapperStyle={{fontSize:9}}/>
+              <Bar dataKey="Price" fill="#63b3ed" stackId="a"/>
+              <Bar dataKey="B.Cash" fill="#b794f4" stackId="a"/>
+              <Bar dataKey="Chips$" fill="#f6ad55" stackId="a" radius={[3,3,0,0]}/>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+          <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>CUMULATIVE SPEND</div>
+          <ResponsiveContainer width="100%" height={150}>
+            <LineChart data={cumChart} margin={{top:0,right:8,left:-20,bottom:0}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+              <XAxis dataKey="step" tick={{fontSize:9,fill:"#4a5568"}}/>
+              <YAxis tick={{fontSize:9,fill:"#4a5568"}}/>
+              <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}}/>
+              <Line type="monotone" dataKey="cumCost" stroke="#90cdf4" strokeWidth={2} dot={{r:3,fill:"#90cdf4"}}/>
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:"8px"}}>
+        <button onClick={expCSV} style={{padding:"8px 16px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>⬇ CSV</button>
+        <button onClick={copyJSON} style={{padding:"8px 16px",background:copied?"#276749":"#2c3a5a",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{copied?"✅ Copied":"📋 Copy JSON"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Buy All Tab ───────────────────────────────────────────────────────────────
+function BuyAllTab({ offers, setOffers, readOnly }) {
+  const [selId, setSelId] = useState(offers[0]?.id);
+  const [seg, setSeg] = useState("nonPayer");
+  const sel = offers.find(o=>o.id===selId)||offers[0];
+  if (!sel) return null;
+
+  const tdS = {padding:"4px 6px",fontSize:"11px",color:"#a0aec0",borderBottom:"1px solid #1a1f30"};
+  const inp = (w) => ({width:w,padding:"3px 6px",background:"#0f1117",border:"1px solid #2d3748",borderRadius:"5px",color:"#e2e8f0",fontSize:"11px",outline:"none"});
+
+  const steps = sel[seg]||[];
+  const updStep = (i,k,v) => setOffers(p=>p.map(o=>{if(o.id!==sel.id)return o; const ns=[...o[seg]]; ns[i]={...ns[i],[k]:+v||0}; return {...o,[seg]:ns};}));
+  const addStep = () => setOffers(p=>p.map(o=>{if(o.id!==sel.id)return o; const ns=[...o[seg],{step:o[seg].length+1,price:3,bonusCash:1,chips:250}]; return {...o,[seg]:ns};}));
+  const addOffer = () => { const nid=_nextOfferId++; setOffers(p=>[...p,{id:nid,name:"Buy All "+(p.length+1),segments:["Everyone"],recurring:false,nonPayer:[{step:1,price:2,bonusCash:0.5,chips:250},{step:2,price:3,bonusCash:1,chips:500}],payer:[{step:1,price:4,bonusCash:1,chips:250},{step:2,price:6,bonusCash:2,chips:500}]}]); setSelId(nid); };
+
+  const compVal = s => r2o((s.bonusCash||0)+((s.chips||0)*CV));
+  const buildJSON = () => ({type:"buyAll",version:"1.0",offers:offers.map(o=>({id:o.name.toLowerCase().replace(/\s+/g,"_"),name:o.name,segments:o.segments,nonPayer:o.nonPayer,payer:o.payer}))});
+  const expCSV = () => { const rows=[]; steps.forEach(s=>rows.push({"Offer":sel.name,"Segment":seg==="nonPayer"?"Non-Payer":"Payer","Step":s.step,"Price ($)":s.price,"B.Cash":s.bonusCash,"Chips":s.chips,"Reward Val":compVal(s)})); downloadCSV(rows,"buyall_offer.csv"); };
+  const [copied,setCopied] = useState(false);
+  const copyJSON = () => { navigator.clipboard?.writeText(JSON.stringify(buildJSON(),null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
+
+  const chartData = steps.map(s=>({step:"S"+s.step,"Price":s.price,"B.Cash":s.bonusCash,"Chips$":r2o((s.chips||0)*CV)}));
+
+  return (
+    <div>
+      <div style={{display:"flex",gap:"8px",marginBottom:"14px",flexWrap:"wrap",alignItems:"center"}}>
+        {offers.map(o=>(
+          <button key={o.id} onClick={()=>setSelId(o.id)} style={{padding:"6px 14px",background:o.id===selId?"#553c9a":"#1e2a45",border:"1px solid "+(o.id===selId?"#b794f4":"#2d3748"),borderRadius:"8px",color:o.id===selId?"#b794f4":"#718096",fontSize:"11px",cursor:"pointer",fontWeight:600}}>
+            {o.name}
+          </button>
+        ))}
+        {!readOnly && <button onClick={addOffer} style={{padding:"6px 12px",background:"#141820",border:"1px dashed #2d3748",borderRadius:"8px",color:"#4a5568",fontSize:"11px",cursor:"pointer"}}>+ New</button>}
+        <div style={{marginLeft:"auto",display:"flex",gap:"6px"}}>
+          {["nonPayer","payer"].map(s=>(
+            <button key={s} onClick={()=>setSeg(s)} style={{padding:"5px 12px",background:seg===s?"#2c5282":"#141820",border:"1px solid "+(seg===s?"#63b3ed":"#2d3748"),borderRadius:"7px",color:seg===s?"#90cdf4":"#718096",fontSize:"11px",cursor:"pointer",fontWeight:600}}>
+              {s==="nonPayer"?"Non-Payer":"Payer"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{display:"flex",gap:"10px",marginBottom:"12px",alignItems:"center"}}>
+        <span style={{fontSize:"11px",color:"#718096"}}>Segments:</span>
+        <SegmentPills segs={sel.segments||[]} onChange={s=>setOffers(p=>p.map(o=>o.id!==sel.id?o:{...o,segments:s}))} readOnly={readOnly}/>
+        <AIPopover tips={[{c:"#b794f4",t:"Buy All drives total wallet spend — price steps should feel like progressive value unlocks"},{c:"#63b3ed",t:"Payer segment tolerates 2-3× higher prices than non-payer for the same reward"},{c:"#68d391",t:"Last step should deliver the highest B.Cash reward to feel like a 'jackpot' moment"}]}/>
+      </div>
+      <div style={{overflowX:"auto",marginBottom:"14px"}}>
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead>
+            <tr style={{background:"#141820"}}>
+              {["Step","Price ($)","B.Cash","Chips","Reward Val",""].map(h=><th key={h} style={{padding:"6px 8px",color:"#4a5568",fontWeight:700,fontSize:10,textAlign:"left"}}>{h}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {steps.map((s,i)=>(
+              <tr key={i} style={{background:i%2===0?"#0f1117":"#111827"}}>
+                <td style={{...tdS,fontWeight:700}}>Step {s.step}</td>
+                <td style={tdS}><input type="number" value={s.price} onChange={e=>updStep(i,"price",e.target.value)} disabled={readOnly} style={inp(55)}/></td>
+                <td style={tdS}><input type="number" step="0.1" value={s.bonusCash} onChange={e=>updStep(i,"bonusCash",e.target.value)} disabled={readOnly} style={inp(55)}/></td>
+                <td style={tdS}><input type="number" value={s.chips} onChange={e=>updStep(i,"chips",e.target.value)} disabled={readOnly} style={inp(60)}/></td>
+                <td style={{...tdS,color:"#b794f4",fontWeight:700}}>${compVal(s).toFixed(2)}</td>
+                <td style={tdS}>{!readOnly&&<button onClick={()=>setOffers(p=>p.map(o=>{if(o.id!==sel.id)return o; const ns=o[seg].filter((_,j)=>j!==i).map((x,j)=>({...x,step:j+1})); return {...o,[seg]:ns};}))} style={{padding:"2px 7px",background:"#2d1a1a",border:"1px solid #9b2c2c",borderRadius:"5px",color:"#fc8181",fontSize:"10px",cursor:"pointer"}}>✕</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!readOnly && <button onClick={addStep} style={{padding:"6px 14px",background:"#1e2a45",border:"1px solid #2d3748",borderRadius:"7px",color:"#90cdf4",fontSize:"11px",cursor:"pointer",marginBottom:"14px",fontWeight:600}}>+ Add Step</button>}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"14px"}}>
+        <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+          <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>PRICE & REWARDS PER STEP</div>
+          <ResponsiveContainer width="100%" height={150}>
+            <BarChart data={chartData} margin={{top:0,right:8,left:-20,bottom:0}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+              <XAxis dataKey="step" tick={{fontSize:9,fill:"#4a5568"}}/>
+              <YAxis tick={{fontSize:9,fill:"#4a5568"}}/>
+              <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}}/>
+              <Legend wrapperStyle={{fontSize:9}}/>
+              <Bar dataKey="Price" fill="#63b3ed"/>
+              <Bar dataKey="B.Cash" fill="#b794f4"/>
+              <Bar dataKey="Chips$" fill="#f6ad55"/>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+          <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>CUMULATIVE PRICE</div>
+          <ResponsiveContainer width="100%" height={150}>
+            <LineChart data={steps.map((s,i)=>({step:"S"+(i+1),cum:r2o(steps.slice(0,i+1).reduce((a,x)=>a+(x.price||0),0))}))} margin={{top:0,right:8,left:-20,bottom:0}}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+              <XAxis dataKey="step" tick={{fontSize:9,fill:"#4a5568"}}/>
+              <YAxis tick={{fontSize:9,fill:"#4a5568"}}/>
+              <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}}/>
+              <Line type="monotone" dataKey="cum" stroke="#b794f4" strokeWidth={2} dot={{r:3,fill:"#b794f4"}}/>
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:"8px"}}>
+        <button onClick={expCSV} style={{padding:"8px 16px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>⬇ CSV</button>
+        <button onClick={copyJSON} style={{padding:"8px 16px",background:copied?"#276749":"#2c3a5a",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{copied?"✅ Copied":"📋 Copy JSON"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ── OffersPage ────────────────────────────────────────────────────────────────
+let _nextOfferHistId = 900;
+function OffersPage({ onBack, readOnly }) {
+  const ACCENT = "#f6ad55";
+  const [subTab, setSubTab] = useState("cashRush");
+
+  const [cashRush,    setCashRush]    = usePersist("gp:offCashRush",  ()=>DEF_CASH_RUSH.map(o=>({...o,segments:[...o.segments]})));
+  const [special,     setSpecial]     = usePersist("gp:offSpecial",   ()=>DEF_SPECIAL.map(o=>({...o,segments:[...o.segments]})));
+  const [onePlus1,    setOnePlus1]    = usePersist("gp:offOnePlus1",  ()=>DEF_1PLUS1.map(o=>({...o,segments:[...o.segments]})));
+  const [rolling,     setRolling]     = usePersist("gp:offRolling",   ()=>DEF_ROLLING.map(o=>({...o,segments:[...o.segments],steps:o.steps.map(s=>({...s}))})));
+  const [buyAll,      setBuyAll]      = usePersist("gp:offBuyAll",    ()=>DEF_BUYALL.map(o=>({...o,segments:[...o.segments],nonPayer:o.nonPayer.map(s=>({...s})),payer:o.payer.map(s=>({...s}))})));
+  const [beginners,   setBeginners]   = usePersist("gp:offBeginners", ()=>DEF_BEGINNERS.map(o=>({...o,segments:[...o.segments]})));
+
+  const TABS = [
+    {id:"cashRush",   label:"💥 Cash Rush",     accent:"#fc8181"},
+    {id:"special",    label:"⭐ Special Offer",  accent:"#f6ad55"},
+    {id:"oneplus1",   label:"🎁 1+1 Offer",      accent:"#68d391"},
+    {id:"rolling",    label:"🔄 Rolling Offer",  accent:"#63b3ed"},
+    {id:"buyall",     label:"🛒 Buy All",         accent:"#b794f4"},
+    {id:"beginners",  label:"🌱 Beginners Pack", accent:"#76e4f7"},
+  ];
+  const curTab = TABS.find(t=>t.id===subTab);
+
+  // Summary stats for header
+  const totalOffers = cashRush.length + special.length + onePlus1.length + rolling.length + buyAll.length + beginners.length;
+  const allStd = [...cashRush,...special,...beginners];
+  const avgVPD = allStd.length > 0 ? r2o(allStd.reduce((a,o)=>{ const v=(o.cash||0)+(o.bonusCash||0)+((o.chips||0)*CV); return a+(v/(o.cash||1)); },0)/allStd.length) : 0;
+
+  return (
+    <div style={{fontFamily:"'Segoe UI',sans-serif",background:"#0f1117",minHeight:"100vh",color:"#e2e8f0"}}>
+      {/* Header */}
+      <div style={{background:"linear-gradient(135deg,#1a1508,#1a1f2e)",padding:"10px 16px",borderBottom:"1px solid #2d3748",display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
+        <button onClick={onBack} style={{padding:"5px 12px",background:"#1e2a45",border:"1px solid #2d3748",borderRadius:"6px",color:"#a0aec0",fontSize:"12px",cursor:"pointer"}}>← Portal</button>
+        <span style={{color:"#2d3748"}}>|</span>
+        <span style={{fontSize:"13px",color:ACCENT,fontWeight:"700"}}>🎁 Offers Manager</span>
+        <div style={{marginLeft:"auto",display:"flex",gap:"14px",fontSize:"11px"}}>
+          {[["Configs",totalOffers,"#f6ad55"],["Avg Val/$1",avgVPD+"×","#68d391"],["Types",TABS.length,"#90cdf4"]].map(([l,v,c])=>(
+            <span key={l} style={{color:"#718096"}}>{l}: <strong style={{color:c}}>{v}</strong></span>
+          ))}
+        </div>
+      </div>
+
+      {/* Sub-tabs */}
+      <div style={{background:"#1a1f2e",borderBottom:"1px solid #2d3748",padding:"0 16px",display:"flex",gap:"2px",overflowX:"auto"}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setSubTab(t.id)}
+            style={{padding:"9px 14px",border:"none",background:"none",cursor:"pointer",color:subTab===t.id?t.accent:"#718096",borderBottom:subTab===t.id?"2px solid "+t.accent:"2px solid transparent",fontWeight:subTab===t.id?"700":"400",fontSize:"12px",whiteSpace:"nowrap"}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div style={{padding:"14px 16px",maxWidth:"1400px",margin:"0 auto"}}>
+        {subTab==="cashRush"  && <StandardOfferTab offers={cashRush}  setOffers={setCashRush}  type="cashRush"  accent="#fc8181" readOnly={readOnly}/>}
+        {subTab==="special"   && <StandardOfferTab offers={special}   setOffers={setSpecial}   type="special"   accent="#f6ad55" readOnly={readOnly}/>}
+        {subTab==="oneplus1"  && <OnePlus1Tab      offers={onePlus1}  setOffers={setOnePlus1}  readOnly={readOnly}/>}
+        {subTab==="rolling"   && <RollingTab        offers={rolling}   setOffers={setRolling}   readOnly={readOnly}/>}
+        {subTab==="buyall"    && <BuyAllTab         offers={buyAll}    setOffers={setBuyAll}    readOnly={readOnly}/>}
+        {subTab==="beginners" && <StandardOfferTab offers={beginners} setOffers={setBeginners} type="beginners" accent="#76e4f7" readOnly={readOnly}/>}
+      </div>
+    </div>
+  );
+}
 
 function TournamentsPage({ onBack }) {
   const base = TOURNAMENT_PRESETS[0];
@@ -3100,10 +3827,10 @@ function PortalWithAuth({ currentUser, users, setUsers, onLogout, onOpenAdmin })
   const [hovered,    setHovered]    = useState(null);
   const [active,     setActive]     = useState(null);
   // History lifted here so it survives navigation back to portal
-  const [v1History,  setV1History]  = useState([]);
-  const [v1HistNote, setV1HistNote] = useState({});
-  const [v2History,  setV2History]  = useState([]);
-  const [v2HistNote, setV2HistNote] = useState({});
+  const [v1History,  setV1History]  = usePersist("gp:v1History",  []);
+  const [v1HistNote, setV1HistNote] = usePersist("gp:v1HistNote", {});
+  const [v2History,  setV2History]  = usePersist("gp:v2History",  []);
+  const [v2HistNote, setV2HistNote] = usePersist("gp:v2HistNote", {});
 
   const activeCount   = FEATURES.filter(f=>f.status==="active").length;
   const totalFeatures = FEATURES.length;
@@ -3129,6 +3856,11 @@ function PortalWithAuth({ currentUser, users, setUsers, onLogout, onOpenAdmin })
   if (active==="tournaments") return (
     <AccessGate sectionId="tournaments">
       <div><ViewOnlyBanner sectionId="tournaments"/><TournamentsPage onBack={()=>setActive(null)}/></div>
+    </AccessGate>
+  );
+  if (active==="offers") return (
+    <AccessGate sectionId="offers">
+      <div><ViewOnlyBanner sectionId="offers"/><OffersPage onBack={()=>setActive(null)} readOnly={!canEdit(sectionPerm("offers"))}/></div>
     </AccessGate>
   );
 
