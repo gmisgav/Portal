@@ -445,27 +445,27 @@ const STATIC_GOALS = [
   {"$type":"winCashMatch","grantTokenAmount":2,"uiInfo":{"iconResourceKey":"Missions/Icons/WinCashRoom_Goal","titleLocalizationKey":"Win in Cash Room"},"treatPositiveCashAsWin":false}
 ];
 const STATIC_UI   = {"resourceKey":"ScriptableObjects/FrenzyJam","joiningMissionPopupEnabled":true};
-const STATIC_MULT = {"defaultCashMultiplier":1,"cashMultiplierConfigurations":[],"cashMultiplierConfigurationOverrides":[{"room":{"id":"match3_e_cash_1_p_cash_u_7","$recordType":"room"},"multiplier":1},{"room":{"id":"match3_e_cash_3_p_cash_u_6","$recordType":"room"},"multiplier":3},{"room":{"id":"match3_e_cash_5_p_cash_u_6","$recordType":"room"},"multiplier":5},{"room":{"id":"match3_e_cash_7_p_cash_u_6","$recordType":"room"},"multiplier":7},{"room":{"id":"blocks_e_cash_1_p_cash_u_6","$recordType":"room"},"multiplier":1},{"room":{"id":"blocks_e_cash_3_p_cash_u_6","$recordType":"room"},"multiplier":3},{"room":{"id":"solitaire_e_cash_1_p_cash_u_6","$recordType":"room"},"multiplier":1},{"room":{"id":"solitaire_e_cash_3_p_cash_u_6","$recordType":"room"},"multiplier":3}]};
+const STATIC_MULT = {"defaultCashMultiplier":1,"cashMultiplierConfigurations":[],"cashMultiplierConfigurationOverrides":[{"room":{"id":"match3_e_cash_1_p_cash_u_7","$recordType":"room"},"multiplier":1},{"room":{"id":"match3_e_cash_1_p_cash_u_6","$recordType":"room"},"multiplier":1},{"room":{"id":"match3_e_cash_3_p_cash_u_6","$recordType":"room"},"multiplier":3},{"room":{"id":"match3_e_cash_5_p_cash_u_6","$recordType":"room"},"multiplier":5},{"room":{"id":"match3_e_cash_7_p_cash_u_6","$recordType":"room"},"multiplier":7},{"room":{"id":"blocks_e_cash_1_p_cash_u_7","$recordType":"room"},"multiplier":1},{"room":{"id":"blocks_e_cash_1_p_cash_u_6","$recordType":"room"},"multiplier":1},{"room":{"id":"blocks_e_cash_3_p_cash_u_6","$recordType":"room"},"multiplier":3},{"room":{"id":"blocks_e_cash_5_p_cash_u_6","$recordType":"room"},"multiplier":5},{"room":{"id":"blocks_e_cash_7_p_cash_u_6","$recordType":"room"},"multiplier":7},{"room":{"id":"solitaire_e_cash_1_p_cash_u_7","$recordType":"room"},"multiplier":1},{"room":{"id":"solitaire_e_cash_1_p_cash_u_6","$recordType":"room"},"multiplier":1},{"room":{"id":"solitaire_e_cash_3_p_cash_u_6","$recordType":"room"},"multiplier":3},{"room":{"id":"solitaire_e_cash_5_p_cash_u_6","$recordType":"room"},"multiplier":5},{"room":{"id":"solitaire_e_cash_7_p_cash_u_6","$recordType":"room"},"multiplier":7},{"room":{"id":"bubbleShooter_e_cash_1_p_cash_u_7","$recordType":"room"},"multiplier":1},{"room":{"id":"bubbleShooter_e_cash_3_p_cash_u_6","$recordType":"room"},"multiplier":3},{"room":{"id":"bubbleShooter_e_cash_5_p_cash_u_6","$recordType":"room"},"multiplier":5},{"room":{"id":"bubbleShooter_e_cash_7_p_cash_u_6","$recordType":"room"},"multiplier":7}]};
 
 const DEF_ROOMS    = [{fee:1,dist:85,winRate:28,rtp:0.86,bonusCash:40,playTokens:1,winTokens:2},{fee:3,dist:8,winRate:30,rtp:0.72,bonusCash:27,playTokens:3,winTokens:6},{fee:5,dist:3,winRate:32,rtp:0.80,bonusCash:17,playTokens:5,winTokens:10},{fee:7,dist:4,winRate:35,rtp:0.88,bonusCash:19,playTokens:7,winTokens:14}];
 const DEF_PERSONAS = [{name:"Casual",pct:"50th %",matches:10,tokens:30},{name:"Engaged",pct:"75th %",matches:23,tokens:92},{name:"Extreme",pct:"90th %",matches:51,tokens:160},{name:"Whale",pct:"99th % Est",matches:80,tokens:250}];
 // Tiers synced from company Excel (Missions_Config - Dollar Per To sheet)
 const DEF_TIERS = [
-  {id:1,tokReq:1,bcash:0,chips:50},   {id:2,tokReq:1,bcash:0,chips:80},
-  {id:3,tokReq:2,bcash:0,chips:100},  {id:4,tokReq:3,bcash:0.10,chips:50},
-  {id:5,tokReq:3,bcash:0.20,chips:0}, {id:6,tokReq:3,bcash:0,chips:150},
-  {id:7,tokReq:4,bcash:0.20,chips:0}, {id:8,tokReq:4,bcash:0.20,chips:100},
-  {id:9,tokReq:9,bcash:0.70,chips:0}, {id:10,tokReq:6,bcash:0.30,chips:0},
-  {id:11,tokReq:7,bcash:0.30,chips:0},{id:12,tokReq:9,bcash:0,chips:500},
-  {id:13,tokReq:8,bcash:0.40,chips:0},{id:14,tokReq:11,bcash:0.40,chips:200},
-  {id:15,tokReq:16,bcash:1.50,chips:0},{id:16,tokReq:10,bcash:0.40,chips:100},
-  {id:17,tokReq:8,bcash:0.20,chips:0},{id:18,tokReq:16,bcash:0.50,chips:0},
-  {id:19,tokReq:10,bcash:0.30,chips:150},{id:20,tokReq:8,bcash:0,chips:300},
-  {id:21,tokReq:11,bcash:0.20,chips:300},{id:22,tokReq:9,bcash:0.40,chips:0},
-  {id:23,tokReq:16,bcash:0.50,chips:0},{id:24,tokReq:10,bcash:0,chips:400},
-  {id:25,tokReq:25,bcash:2.00,chips:0},{id:26,tokReq:30,bcash:0.60,chips:200},
-  {id:27,tokReq:35,bcash:1.00,chips:0},{id:28,tokReq:38,bcash:0.80,chips:300},
-  {id:29,tokReq:40,bcash:1.00,chips:0},{id:30,tokReq:50,bcash:25.00,chips:0},
+  {id:1, tokReq:1,  bcash:0,    chips:20},  {id:2, tokReq:1,  bcash:0,   chips:40},
+  {id:3, tokReq:2,  bcash:0,    chips:40},  {id:4, tokReq:4,  bcash:0.1, chips:20},
+  {id:5, tokReq:3,  bcash:0.1,  chips:0},   {id:6, tokReq:4,  bcash:0,   chips:150},
+  {id:7, tokReq:6,  bcash:0.2,  chips:0},   {id:8, tokReq:4,  bcash:0.1, chips:100},
+  {id:9, tokReq:14, bcash:0.5,  chips:0},   {id:10,tokReq:8,  bcash:0.2, chips:0},
+  {id:11,tokReq:7,  bcash:0,    chips:200}, {id:12,tokReq:14, bcash:0.3, chips:0},
+  {id:13,tokReq:12, bcash:0.2,  chips:0},   {id:14,tokReq:9,  bcash:0.1, chips:200},
+  {id:15,tokReq:22, bcash:1,    chips:0},   {id:16,tokReq:12, bcash:0.3, chips:100},
+  {id:17,tokReq:8,  bcash:0.2,  chips:0},   {id:18,tokReq:18, bcash:0.5, chips:100},
+  {id:19,tokReq:12, bcash:0.3,  chips:0},   {id:20,tokReq:8,  bcash:0,   chips:240},
+  {id:21,tokReq:11, bcash:0.2,  chips:300}, {id:22,tokReq:15, bcash:0.3, chips:0},
+  {id:23,tokReq:18, bcash:0.5,  chips:0},   {id:24,tokReq:10, bcash:0,   chips:400},
+  {id:25,tokReq:25, bcash:2,    chips:0},   {id:26,tokReq:40, bcash:0.6, chips:200},
+  {id:27,tokReq:55, bcash:1,    chips:0},   {id:28,tokReq:58, bcash:0.8, chips:300},
+  {id:29,tokReq:60, bcash:1,    chips:0},   {id:30,tokReq:100,bcash:18,  chips:0},
 ];
 let _nextTierId = 200;
 
@@ -486,27 +486,39 @@ function MissionsPage({ onBack, readOnly, history, setHistory, histNote, setHist
   const handleXlFile = (file) => {
     if (!file) return;
     const COL_ALIASES = {
-      "tokens req":"tokReq","tokens_req":"tokReq","tokreq":"tokReq","token req":"tokReq",
-      "reward b.cash":"bcash","reward bcash":"bcash","b.cash":"bcash","bcash":"bcash","bonus cash":"bcash",
-      "reward chips":"chips","chips":"chips","reward_chips":"chips",
+      // tokens
+      "tokens req":"tokReq","tokens_req":"tokReq","tokreq":"tokReq","token req":"tokReq","token_req":"tokReq",
+      // bonus cash — all common variants
+      "reward b.cash":"bcash","reward bcash":"bcash","b.cash":"bcash","bcash":"bcash",
+      "bonus cash":"bcash","bonus_cash":"bcash","reward_b.cash":"bcash","b cash":"bcash",
+      "reward b. cash":"bcash","bcash ($)":"bcash","bonus cash ($)":"bcash","b.cash ($)":"bcash",
+      "reward bonus cash":"bcash",
+      // chips
+      "reward chips":"chips","chips":"chips","reward_chips":"chips","reward chips ($)":"chips",
     };
+    // Strip currency/percent symbols so "$0.50", "50%" etc parse correctly
+    const cleanNum = v => parseFloat(String(v ?? "").replace(/[$,%]/g, "").trim());
+
     const parseRows = (rawRows) => {
       const errors = [], parsed = [];
+      let bcashColFound = false;
       rawRows.forEach((row, ri) => {
         const norm = {};
         Object.entries(row).forEach(([k,v]) => {
           const mk = COL_ALIASES[k.toLowerCase().trim()];
-          if (mk) norm[mk] = v;
+          if (mk) { norm[mk] = v; if (mk === "bcash") bcashColFound = true; }
         });
         if (norm.tokReq === undefined && norm.bcash === undefined) return;
-        const tokReq = parseFloat(norm.tokReq);
+        const tokReq = cleanNum(norm.tokReq);
         if (isNaN(tokReq) || tokReq < 1) {
           if (String(norm.tokReq||"").trim()) errors.push("Row "+(ri+1)+": Tokens Req = "+norm.tokReq+" is not valid");
           return;
         }
-        parsed.push({ id:_nextTierId++, tokReq:Math.max(1,Math.round(tokReq)), bcash:Math.max(0,r2(parseFloat(norm.bcash)||0)), chips:Math.max(0,Math.round(parseFloat(norm.chips)||0)) });
+        const bcashVal = cleanNum(norm.bcash);
+        parsed.push({ id:_nextTierId++, tokReq:Math.max(1,Math.round(tokReq)), bcash:Math.max(0,r2(isNaN(bcashVal)?0:bcashVal)), chips:Math.max(0,Math.round(isNaN(cleanNum(norm.chips))?0:cleanNum(norm.chips))) });
       });
       if (!parsed.length && !errors.length) errors.push("No valid rows found. Columns needed: 'Tokens Req', 'Reward B.cash', 'Reward Chips'");
+      if (parsed.length && !bcashColFound) errors.push("ℹ️ No B.cash column found — all B.cash set to 0. Expected: 'Bonus Cash', 'B.cash', 'Reward B.cash'");
       return { errors:errors.slice(0,10), parsed };
     };
 
@@ -516,7 +528,8 @@ function MissionsPage({ onBack, readOnly, history, setHistory, histNote, setHist
     if (ext === "csv" || ext === "tsv") {
       reader.onload = (e) => {
         try {
-          const text  = e.target.result;
+          // Strip UTF-8 BOM if present (common when exported from Excel on Windows)
+          const text  = e.target.result.replace(/^\uFEFF/, "");
           const lines = text.trim().split(/\r?\n/);
           if (lines.length < 2) { setXlUpload({rows:[],errors:["File is empty"],fileName:file.name}); return; }
           const splitRow = (line) => {
@@ -1950,7 +1963,7 @@ function calcPersonaSim(persona, rates, days, sortedMilestones) {
   };
 }
 
-function MissionsV2Page({ onBack, history, setHistory, histNote, setHistNote }) {
+function MissionsV2Page({ onBack, readOnly, history, setHistory, histNote, setHistNote }) {
   const [tab,      setTab]      = useState("config");
   const [days,     setDays]     = useState(DEF_DAYS);
   const [rates,    setRates]    = useState(DEF_RATES);
@@ -3105,7 +3118,7 @@ function PortalWithAuth({ currentUser, users, setUsers, onLogout, onOpenAdmin })
   );
   if (active==="missions-v2") return (
     <AccessGate sectionId="missions-v2">
-      <div><ViewOnlyBanner sectionId="missions-v2"/><MissionsV2Page onBack={()=>setActive(null)} history={v2History} setHistory={setV2History} histNote={v2HistNote} setHistNote={setV2HistNote}/></div>
+      <div><ViewOnlyBanner sectionId="missions-v2"/><MissionsV2Page onBack={()=>setActive(null)} readOnly={!canEdit(sectionPerm("missions-v2"))} history={v2History} setHistory={setV2History} histNote={v2HistNote} setHistNote={setV2HistNote}/></div>
     </AccessGate>
   );
   if (active==="matchmaking") return (
