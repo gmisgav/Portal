@@ -21,6 +21,320 @@ function usePersist(key, def) {
 import { ComposedChart, BarChart, LineChart, Bar, Line, Area, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 
 // ══════════════════════════════════════════════════════════════════════════════
+// DEEP JSON QA ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+function runDeepQA(type, json) {
+  const R = [];
+  const err  = (m, d) => R.push({level:"error", msg:m, detail:d||""});
+  const warn = (m, d) => R.push({level:"warn",  msg:m, detail:d||""});
+  const pass = (m)    => R.push({level:"pass",  msg:m});
+  const info = (m)    => R.push({level:"info",  msg:m});
+
+  // Universal: serialisation test
+  try { JSON.parse(JSON.stringify(json)); }
+  catch(e) { err("JSON serialisation failed", e.message); return R; }
+
+  // ── Missions V1 ───────────────────────────────────────────────────────────
+  if (type === "missions_v1") {
+    ["minUserLevel","tiers","goals","uiConfig","multipliersConfiguration"].forEach(k =>
+      json[k]!==undefined ? pass('"'+k+'" present') : err('Missing required field "'+k+'"')
+    );
+    const tiers = json.tiers||[];
+    tiers.length>0 ? pass(tiers.length+" tiers defined") : err("No tiers defined");
+    // Strictly increasing token amounts
+    let mono=true;
+    for(let i=1;i<tiers.length;i++) {
+      if(tiers[i].requiredTokenAmount<=tiers[i-1].requiredTokenAmount){
+        err("Tier "+(i+1)+" requiredTokenAmount ("+tiers[i].requiredTokenAmount+") ≤ tier "+i+" ("+tiers[i-1].requiredTokenAmount+")"); mono=false;
+      }
+    }
+    if(mono&&tiers.length>1) pass("Token amounts strictly increasing");
+    // No empty rewards; integer chips; b.cash precision
+    let emptyRew=0,chipErr=0,bcErr=0;
+    tiers.forEach((t,i) => {
+      const skus=t.skus||[];
+      if(skus.length===0){err("Tier "+(i+1)+" has no SKUs (empty reward)");emptyRew++;}
+      skus.forEach(s => {
+        const v=s.payload?.value||0;
+        if(v<=0) err("Tier "+(i+1)+' SKU "'+s.type+'" has value ≤ 0');
+        if(s.type==="virtual"&&v!==Math.round(v)){warn("Tier "+(i+1)+" chips="+v+" is not an integer");chipErr++;}
+        if(s.type==="bonusCash"&&Math.round(v*100)/100!==v){warn("Tier "+(i+1)+" bonusCash="+v+" has >2 decimal places");bcErr++;}
+      });
+    });
+    if(!emptyRew&&tiers.length>0) pass("All tiers have reward SKUs");
+    if(!chipErr) pass("All chips values are integers");
+    if(!bcErr)   pass("Bonus cash values ≤ 2 decimal places");
+    // Multipliers
+    const mc=json.multipliersConfiguration;
+    if(mc&&typeof mc==="object"){
+      const rooms=Object.keys(mc);
+      rooms.length>0 ? pass(rooms.length+" multiplier rooms configured") : warn("multipliersConfiguration is empty");
+      let mcErr=0;
+      rooms.forEach(r=>{if(typeof mc[r]!=="number"||mc[r]<=0){warn("Room '"+r+"' multiplier "+mc[r]+" is not a positive number");mcErr++;}});
+      if(!mcErr&&rooms.length>0) pass("All multiplier values are positive");
+    }
+    const goals=json.goals||[];
+    goals.length===2 ? pass("Goals count: 2") : warn("Expected 2 goals, found "+goals.length);
+    info(tiers.length+" tiers | max token req: "+(tiers[tiers.length-1]?.requiredTokenAmount||"?"));
+  }
+
+  // ── Missions V2 ───────────────────────────────────────────────────────────
+  if (type === "missions_v2") {
+    ["version","weekConfig","days","scoreTokenRates"].forEach(k =>
+      json[k]!==undefined ? pass('"'+k+'" present') : err('Missing "'+k+'"')
+    );
+    const days=json.days||[];
+    days.length===7 ? pass("7 days present") : err("Expected 7 days, got "+days.length);
+    let dayOk=true;
+    days.forEach((d,i)=>{if(d.day!==i+1){err("Day at index "+i+" has day="+d.day+", expected "+(i+1));dayOk=false;}});
+    if(dayOk&&days.length===7) pass("Day numbering sequential 1–7");
+    // Rates
+    const rates=json.scoreTokenRates||{};
+    const games=Object.keys(rates);
+    games.length>0 ? pass(games.length+" game rate sets") : warn("No scoreTokenRates defined");
+    let rateErr=0;
+    games.forEach(g=>{Object.entries(rates[g]||{}).forEach(([stars,rate])=>{if(!rate||rate<=0){warn("Game '"+g+"' stars "+stars+" rate="+rate+" (should be >0)");rateErr++;}});});
+    if(!rateErr&&games.length>0) pass("All game rates are positive");
+    // Milestones
+    const mstn=(json.weekConfig?.milestones)||[];
+    if(mstn.length>0){
+      const stars=mstn.map(m=>m.stars||0);
+      let monoOk=true;
+      for(let i=1;i<stars.length;i++) if(stars[i]<=stars[i-1]){err("Milestone "+i+" stars ("+stars[i]+") ≤ previous ("+stars[i-1]+")");monoOk=false;}
+      if(monoOk) pass("Milestone star thresholds strictly increasing");
+      new Set(stars).size===stars.length ? pass("No duplicate milestone star values") : err("Duplicate milestone star thresholds");
+      let mstnValErr=0;
+      mstn.forEach((m,i)=>{(m.rewards||[]).forEach(r=>{if((r.value||0)<=0){warn("Milestone "+(i+1)+" reward '"+r.type+"' value="+r.value);mstnValErr++;}});});
+      if(!mstnValErr) pass("All milestone reward values > 0");
+      info(mstn.length+" milestones | max stars: "+Math.max(...stars));
+    } else warn("No milestones in weekConfig");
+  }
+
+  // ── Tournaments ───────────────────────────────────────────────────────────
+  if (type === "tournaments") {
+    ["minLevel","tokensEntryFee","playersPerBucket","prizeCalculation","winnerReward","loserPopup","tokensReward"].forEach(k =>
+      json[k]!==undefined ? pass('"'+k+'" present') : err('Missing "'+k+'"')
+    );
+    json.tokensEntryFee>0 ? pass("tokensEntryFee > 0") : err("tokensEntryFee must be > 0");
+    json.playersPerBucket>=2 ? pass("playersPerBucket ≥ 2") : err("playersPerBucket must be ≥ 2 (got "+json.playersPerBucket+")");
+    const pp=json.prizeCalculation||{}, places=pp.placesPrizes||[];
+    places.length>0 ? pass(places.length+" prize places") : err("No prize places defined");
+    const totalW=places.reduce((s,p)=>s+(p.weight||0),0);
+    (totalW>99&&totalW<101) ? pass("Prize weights sum ≈ 100 ("+totalW.toFixed(2)+")") : warn("Prize weights sum = "+totalW.toFixed(2)+" (expected ~100)");
+    if(places.length>1){
+      const sorted=[...places].sort((a,b)=>b.weight-a.weight);
+      sorted[0]===places[0] ? pass("1st place has highest weight") : warn("1st place weight ("+places[0].weight+") is not the highest");
+    }
+    (pp.seed?.skus?.[0]?.payload?.value||0)>0 ? pass("Seed value > 0") : warn("Seed is 0");
+    (pp.tokenPrice||0)>0 ? pass("tokenPrice > 0") : err("tokenPrice must be > 0");
+    const wr=json.tokensReward||{}, sr=wr.syncRoomRewards||[], ar=wr.asyncRoomRewards||[];
+    (sr.length+ar.length)>0 ? pass((sr.length+ar.length)+" room reward(s)") : warn("No room rewards configured");
+    let roomErr=0;
+    sr.forEach((r,i)=>{if(!r.roomId){err("Sync room "+i+" missing roomId");roomErr++;}if((r.tokensPerPlay||0)<1)warn("Sync room '"+r.roomId+"' tokensPerPlay="+r.tokensPerPlay+" (should be ≥1)");});
+    ar.forEach((r,i)=>{if(!r.roomId){err("Async room "+i+" missing roomId");roomErr++;}if((r.cashToTokensMultiplier||0)<=0)warn("Async room '"+r.roomId+"' multiplier="+r.cashToTokensMultiplier+" (should be >0)");});
+    if(!roomErr) pass("All room IDs present");
+    (json.winnerReward?.duration||0)>0 ? pass("winnerReward duration > 0") : warn("winnerReward duration is 0");
+    info(places.length+" places | "+sr.length+" sync, "+ar.length+" async rooms");
+  }
+
+  // ── Matchmaking ───────────────────────────────────────────────────────────
+  if (type === "matchmaking") {
+    ["poolStatus2AdditionalScore","lastMatchResultAdditionalScore","winMatchesAmountAdditionalScores",
+     "matchScoreRange","percentageWeightOfLastMatch","positiveKFactor","negativeKFactor",
+     "averageTakenIntoAccountPreviousMatchesAmount","initialNormalizedScore"].forEach(k =>
+      json[k]!==undefined ? pass('"'+k+'" present') : err('Missing "'+k+'"')
+    );
+    (json.positiveKFactor||0)>0 ? pass("positiveKFactor > 0") : err("positiveKFactor must be > 0");
+    (json.negativeKFactor||0)>0 ? pass("negativeKFactor > 0") : err("negativeKFactor must be > 0");
+    const mr=json.matchScoreRange||{};
+    (mr.averageScoreHighestPercentage||0)>(mr.averageScoreLowerPercentage||0)
+      ? pass("matchRange.max > min")
+      : err("averageScoreHighestPercentage ("+mr.averageScoreHighestPercentage+") must be > averageScoreLowerPercentage ("+mr.averageScoreLowerPercentage+")");
+    (mr.averageScoreLowerPercentage||0)>=0 ? pass("matchRange.minPct ≥ 0") : err("averageScoreLowerPercentage must be ≥ 0");
+    const is=json.initialNormalizedScore||0;
+    (is>=1&&is<=100) ? pass("initialNormalizedScore "+is+" in 1–100") : warn("initialNormalizedScore "+is+" outside typical 1–100 range");
+    const n=json.averageTakenIntoAccountPreviousMatchesAmount||0;
+    n>=2 ? pass("avgLookback ≥ 2") : warn("avgLookback "+n+" is very small (min recommended: 2)");
+    const wrs=json.winMatchesAmountAdditionalScores||[];
+    if(wrs.length>0){
+      let monoOk=true;
+      for(let i=1;i<wrs.length;i++) if((wrs[i].winMatchesAmount||0)<(wrs[i-1].winMatchesAmount||0)){warn("winMatches scores not sorted at index "+i);monoOk=false;}
+      if(monoOk) pass("Win ratio buckets sorted");
+      (json.lastMatchResultAdditionalScore?.winAdditionalScore||0)>0
+        ? pass("lastGame win bonus > 0") : warn("lastGame win bonus is 0");
+    }
+    info(wrs.length+" win-ratio buckets | initialScore="+is);
+  }
+
+  // ── Offers: Standard (cashRush / special / beginners) ────────────────────
+  if (["cashRush","special","beginners"].includes(type)) {
+    const offers=json.offers||[];
+    offers.length>0 ? pass(offers.length+" offer(s) defined") : err("No offers defined");
+    const names=offers.map(o=>o.name||"");
+    new Set(names).size===names.length ? pass("All offer names unique") : err("Duplicate names: "+names.filter((n,i)=>names.indexOf(n)!==i).join(", "));
+    let priceErr=0,rewErr=0,capErr=0,durErr=0,segErr=0;
+    offers.forEach((o,i)=>{
+      const n=o.name||"Offer "+(i+1);
+      if(!(o.price>0)){err(n+": price must be > 0 (got "+o.price+")");priceErr++;}
+      const hasRew=(o.rewards?.chips||0)>0||(o.rewards?.bonusCash||0)>0;
+      if(!hasRew){err(n+": no rewards (chips=0 and bonusCash=0)");rewErr++;}
+      if(!(o.cap>=1)){warn(n+": cap="+o.cap+" (should be ≥1)");capErr++;}
+      if(!(o.durationHours>0)){warn(n+": durationHours="+o.durationHours+" (should be >0)");durErr++;}
+      if(!(o.segments?.length>0)){warn(n+": no segments assigned");segErr++;}
+      const vpd=o.valuePer1Dollar||0;
+      if(vpd>0&&vpd<1.0) warn(n+": value/$1 = "+vpd.toFixed(2)+" — player gets less than they spend, check rewards");
+      if(vpd>10)          warn(n+": value/$1 = "+vpd.toFixed(2)+" is very high — verify pricing");
+    });
+    if(!priceErr&&offers.length>0) pass("All prices > 0");
+    if(!rewErr&&offers.length>0)   pass("All offers have rewards");
+    if(!capErr&&offers.length>0)   pass("All CAPs ≥ 1");
+    if(!segErr&&offers.length>0)   pass("All offers have segments");
+    const avgVPD=offers.length>0?offers.reduce((a,o)=>a+(o.valuePer1Dollar||0),0)/offers.length:0;
+    if(avgVPD>0) info("Avg value/$1: "+avgVPD.toFixed(2)+"× across "+offers.length+" offers");
+  }
+
+  // ── Offers: 1+1 ──────────────────────────────────────────────────────────
+  if (type === "oneForOne") {
+    const offers=json.offers||[];
+    offers.length>0 ? pass(offers.length+" offer(s) defined") : err("No offers defined");
+    let priceErr=0,rewErr=0,segErr=0;
+    offers.forEach((o,i)=>{
+      const n=o.name||"Offer "+(i+1);
+      if(!(o.price>0)){err(n+": price must be > 0");priceErr++;}
+      const hasBuy=(o.purchase?.chips||0)>0||(o.purchase?.bonusCash||0)>0;
+      const hasFree=(o.free?.chips||0)>0||(o.free?.bonusCash||0)>0;
+      if(!hasBuy){err(n+": purchase rewards are empty");rewErr++;}
+      if(!hasFree){err(n+": free rewards are empty");rewErr++;}
+      if(!(o.segments?.length>0)){warn(n+": no segments assigned");segErr++;}
+      const bc=o.purchase?.chips||0, fc=o.free?.chips||0;
+      if(bc>0&&fc>0){const r=fc/bc;if(r<0.5||r>2.0)warn(n+": free chips ("+fc+") differs significantly from purchase chips ("+bc+")");}
+    });
+    if(!priceErr&&offers.length>0) pass("All prices > 0");
+    if(!rewErr&&offers.length>0)   pass("All offers have purchase + free rewards");
+    if(!segErr&&offers.length>0)   pass("All offers have segments");
+  }
+
+  // ── Offers: Rolling ───────────────────────────────────────────────────────
+  if (type === "rollingOffer") {
+    const offers=json.offers||[];
+    offers.length>0 ? pass(offers.length+" rolling offer(s)") : err("No offers defined");
+    offers.forEach((o,i)=>{
+      const n=o.name||"Offer "+(i+1), steps=o.steps||[];
+      steps.length>=2 ? pass(n+": "+steps.length+" steps") : warn(n+": "+steps.length+" step(s) — min recommended 2");
+      let capErr=0,rewErr=0;
+      steps.forEach((s,si)=>{
+        if(!s.isFree&&!(s.price>0)){err(n+" Step "+(si+1)+": paid step price="+s.price+" (must be >0)");capErr++;}
+        if(!s.isFree&&!(s.cap>=1)){warn(n+" Step "+(si+1)+": cap="+s.cap+" (should be ≥1)");capErr++;}
+        if((s.chips||0)===0&&(s.bonusCash||0)===0){warn(n+" Step "+(si+1)+": no reward (chips=0, bonusCash=0)");rewErr++;}
+      });
+      if(!capErr) pass(n+": paid step prices valid");
+      if(!rewErr) pass(n+": all steps have rewards");
+      if(!(o.segments?.length>0)) warn(n+": no segments assigned");
+    });
+  }
+
+  // ── Cash Back ─────────────────────────────────────────────────────────────
+  if (type === "cashback") {
+    const cfgs = json.configs||[];
+    cfgs.length>0 ? pass(cfgs.length+" config(s) defined") : err("No cashback configs defined");
+    const names = cfgs.map(c=>c.name||"");
+    new Set(names).size===names.length ? pass("All config names unique") : err("Duplicate config names: "+names.filter((n,i)=>names.indexOf(n)!==i).join(", "));
+    let pctErr=0,durationErr=0,roomErr=0,segErr=0;
+    cfgs.forEach((c,i)=>{
+      const n=c.name||"Config "+(i+1), cfg=c.config||{};
+      const pct=cfg.percentage||0;
+      if(pct<=0||pct>1){err(n+": percentage must be 0–1 (got "+pct+")");pctErr++;}
+      else if(pct>0.5) warn(n+": cashback "+Math.round(pct*100)+"% is very high — verify this is intentional");
+      const bMins = cfg.benefitActiveDuration ? (() => { const p=cfg.benefitActiveDuration.split(/[.:]/); return (+p[0]||0)*1440+(+p[1]||0)*60+(+p[2]||0); })() : 0;
+      const mMins = cfg.minBenefitActiveDuration ? (() => { const p=cfg.minBenefitActiveDuration.split(/[.:]/); return (+p[0]||0)*1440+(+p[1]||0)*60+(+p[2]||0); })() : 0;
+      if(bMins<=0){err(n+": benefitActiveDuration resolves to 0 minutes");durationErr++;}
+      if(mMins<=0){warn(n+": minBenefitActiveDuration resolves to 0 minutes");}
+      if(mMins>bMins){err(n+": minBenefitActiveDuration ("+mMins+"min) > benefitActiveDuration ("+bMins+"min)");durationErr++;}
+      const af=cfg.almostFinishedActiveDurationPercentage||0;
+      if(af<=0||af>=1) warn(n+": almostFinishedActiveDurationPercentage "+af+" should be between 0 and 1");
+      const rc=cfg.roomsCriteria||{};
+      if(!(rc.included?.length>0)){err(n+": roomsCriteria.included is empty");roomErr++;}
+      if(rc.threshold!==undefined&&rc.threshold<0){warn(n+": threshold "+rc.threshold+" should be ≥ 0");}
+      if(!(c.segments?.length>0)){warn(n+": no segments assigned");segErr++;}
+    });
+    if(!pctErr&&cfgs.length>0)    pass("All cashback percentages in 0–100% range");
+    if(!durationErr&&cfgs.length>0) pass("All duration values valid");
+    if(!roomErr&&cfgs.length>0)   pass("All configs have included rooms");
+    if(!segErr&&cfgs.length>0)    pass("All configs have segments");
+    const avgPct = cfgs.length>0 ? cfgs.reduce((a,c)=>a+(c.config?.percentage||0),0)/cfgs.length : 0;
+    if(avgPct>0) info(cfgs.length+" configs | avg cashback: "+Math.round(avgPct*100)+"%");
+  }
+
+  // ── Offers: Buy All ───────────────────────────────────────────────────────
+  if (type === "buyAll") {
+    const offers=json.offers||[];
+    offers.length>0 ? pass(offers.length+" buy-all offer(s)") : err("No offers defined");
+    offers.forEach((o,i)=>{
+      const n=o.name||"Offer "+(i+1), np=o.nonPayer||[], py=o.payer||[];
+      np.length>0 ? pass(n+": "+np.length+" non-payer steps") : err(n+": no non-payer steps");
+      py.length>0 ? pass(n+": "+py.length+" payer steps")     : err(n+": no payer steps");
+      let priceOk=true;
+      np.forEach((s,si)=>{const ps=py[si];if(ps&&(ps.price||0)<(s.price||0)){warn(n+" Step "+(si+1)+": payer price ($"+ps.price+") < non-payer ($"+s.price+") — unusual");priceOk=false;}});
+      if(priceOk) pass(n+": payer prices ≥ non-payer prices");
+      if(!(o.segments?.length>0)) warn(n+": no segments assigned");
+    });
+  }
+
+  return R;
+}
+
+// ── Shared QA results panel ───────────────────────────────────────────────────
+function DeepQAPanel({ checks, onClose }) {
+  if (!checks || checks.length===0) return null;
+  const [showPasses, setShowPasses] = useState(false);
+  const errors = checks.filter(c=>c.level==="error");
+  const warns  = checks.filter(c=>c.level==="warn");
+  const passes = checks.filter(c=>c.level==="pass");
+  const infos  = checks.filter(c=>c.level==="info");
+  const hasBad = errors.length>0||warns.length>0;
+  const border = errors.length>0?"#e53e3e":warns.length>0?"#d69e2e":"#38a169";
+  const icon   = errors.length>0?"❌":warns.length>0?"⚠️":"✅";
+  const summary = errors.length>0
+    ? errors.length+" error"+(errors.length>1?"s":"")+(warns.length>0?", "+warns.length+" warning"+(warns.length>1?"s":""):"")
+    : warns.length>0 ? warns.length+" warning"+(warns.length>1?"s":"")+" (copy allowed)"
+    : "All "+passes.length+" checks passed";
+  const LCFG = {
+    error:{bg:"#2d1010",bdr:"#e53e3e",ic:"❌",c:"#fc8181"},
+    warn: {bg:"#2d2000",bdr:"#d69e2e",ic:"⚠️",c:"#f6e05e"},
+    pass: {bg:"#0a1a0d",bdr:"#38a169",ic:"✅",c:"#68d391"},
+    info: {bg:"#0a1420",bdr:"#2b6cb0",ic:"ℹ️",c:"#90cdf4"},
+  };
+  return (
+    <div style={{marginTop:"10px",background:errors.length>0?"#1a0a0a":warns.length>0?"#1a1500":"#0a140d",border:"1px solid "+border,borderRadius:"8px",padding:"10px",fontSize:"11px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:hasBad?"8px":"0"}}>
+        <span style={{fontWeight:700,color:border}}>{icon} QA: {summary}</span>
+        <button onClick={onClose} style={{background:"none",border:"none",color:"#4a5568",cursor:"pointer",fontSize:"16px",lineHeight:1,padding:"0 2px"}}>×</button>
+      </div>
+      {[...errors,...warns,...infos].map((c,i)=>{
+        const cf=LCFG[c.level];
+        return <div key={i} style={{display:"flex",gap:"6px",padding:"4px 8px",borderRadius:"5px",marginBottom:"3px",background:cf.bg,border:"1px solid "+cf.bdr}}>
+          <span style={{flexShrink:0}}>{cf.ic}</span>
+          <span style={{color:cf.c}}>{c.msg}</span>
+          {c.detail&&<span style={{color:"#4a5568",marginLeft:"4px"}}>— {c.detail}</span>}
+        </div>;
+      })}
+      {passes.length>0&&(
+        <div style={{marginTop:"4px"}}>
+          <button onClick={()=>setShowPasses(p=>!p)} style={{background:"none",border:"none",color:"#4a5568",cursor:"pointer",fontSize:"10px",padding:"2px 0",fontFamily:"inherit"}}>
+            {showPasses?"▼":"▶"} {passes.length} check{passes.length>1?"s":""} passed
+          </button>
+          {showPasses&&passes.map((c,i)=>(
+            <div key={i} style={{display:"flex",gap:"6px",padding:"4px 8px",borderRadius:"5px",marginBottom:"3px",background:LCFG.pass.bg,border:"1px solid "+LCFG.pass.bdr}}>
+              <span>✅</span><span style={{color:LCFG.pass.c}}>{c.msg}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // AUTH & PERMISSIONS SYSTEM
 // ══════════════════════════════════════════════════════════════════════════════
 const LEVELS    = ["none","view","edit","admin"];
@@ -114,7 +428,7 @@ function UserRow({ u, currentUser, editId, setEditId, onSave, onDelete }) {
   const LEVEL_OPTS= ["none","view","edit","admin"];
   const LEVEL_COL = { none:"#4a5568", view:"#63b3ed", edit:"#f6ad55", admin:"#fc8181" };
   const ROLE_COL  = { superadmin:"#f6ad55", editor:"#90cdf4", viewer:"#718096" };
-  const FEAT_LIST = [{id:"economy",icon:"💰",label:"Economy"},{id:"tournaments",icon:"🏆",label:"Tournaments"},{id:"missions",icon:"🗡️",label:"Missions"},{id:"missions-v2",icon:"⚔️",label:"Missions V2"},{id:"cashback",icon:"💸",label:"Cash Back"},{id:"liveops",icon:"🎮",label:"Live Ops"},{id:"offers",icon:"🎁",label:"Offers"}];
+  const FEAT_LIST = [{id:"economy",icon:"💰",label:"Economy"},{id:"tournaments",icon:"🏆",label:"Tournaments"},{id:"missions",icon:"🗡️",label:"Missions"},{id:"missions-v2",icon:"⚔️",label:"Missions V2"},{id:"cashback",icon:"💸",label:"Cash Back"},{id:"liveops",icon:"🎮",label:"Live Ops"},{id:"matchmaking",icon:"🎯",label:"Matchmaking"},{id:"offers",icon:"🎁",label:"Offers"}];
 
   const startEdit  = () => { setDraft({...u, permissions:{...u.permissions}}); setEditId(u.id); };
   const cancelEdit = () => { setDraft(null); setEditId(null); };
@@ -207,7 +521,7 @@ function AdminPanel({ users, setUsers, currentUser, onClose }) {
   const LEVEL_OPTS = ["none","view","edit","admin"];
   const LEVEL_COL  = { none:"#4a5568", view:"#63b3ed", edit:"#f6ad55", admin:"#fc8181" };
   const ROLE_COL   = { superadmin:"#f6ad55", editor:"#90cdf4", viewer:"#718096" };
-  const FEAT_LIST  = [{id:"economy",icon:"💰",label:"Economy"},{id:"tournaments",icon:"🏆",label:"Tournaments"},{id:"missions",icon:"🗡️",label:"Missions"},{id:"missions-v2",icon:"⚔️",label:"Missions V2"},{id:"cashback",icon:"💸",label:"Cash Back"},{id:"liveops",icon:"🎮",label:"Live Ops"}];
+  const FEAT_LIST  = [{id:"economy",icon:"💰",label:"Economy"},{id:"tournaments",icon:"🏆",label:"Tournaments"},{id:"missions",icon:"🗡️",label:"Missions"},{id:"missions-v2",icon:"⚔️",label:"Missions V2"},{id:"cashback",icon:"💸",label:"Cash Back"},{id:"liveops",icon:"🎮",label:"Live Ops"},{id:"matchmaking",icon:"🎯",label:"Matchmaking"},{id:"offers",icon:"🎁",label:"Offers"}];
 
   const flash = msg => { setSaveMsg(msg); setTimeout(()=>setSaveMsg(""),2000); };
   const onSave   = updated => { setUsers(u=>u.map(x=>x.id===updated.id?updated:x)); setEditId(null); flash("✅ Saved"); };
@@ -410,11 +724,11 @@ function ViewOnlyBanner({ sectionId }) {
 // SHARED HELPERS
 // ══════════════════════════════════════════════════════════════════════════════
 const FEATURES = [
-  {id:"economy",    icon:"💰",label:"Economy",    color:"#f6ad55",border:"#744210",bg:"#1a1508",status:"active",     description:"Token rates, reward values, chip pricing, platform rake & room EV calculations."},
+  {id:"economy",    icon:"💰",label:"Economy",    color:"#f6ad55",border:"#744210",bg:"#1a1508",status:"coming-soon",description:"Token rates, reward values, chip pricing, platform rake & room EV calculations."},
   {id:"tournaments",icon:"🏆",label:"Tournaments",color:"#90cdf4",border:"#2c5282",bg:"#0d1a2e",status:"active",description:"Configure tournament schedules, prize pools, entry fees, room rewards, missions and leaderboard rules."},
   {id:"missions",   icon:"🗡️",label:"Missions",   color:"#68d391",border:"#276749",bg:"#0d1a12",status:"active",     description:"30-tier mission simulator with token earn rates, B.cash & chip rewards, persona UX and export."},
   {id:"missions-v2",icon:"⚔️",label:"Missions V2",color:"#b794f4",border:"#553c9a",bg:"#150d2e",status:"active",     description:"7-day daily missions with per-mission rewards, stars, weekly bar milestones and persona analysis."},
-  {id:"cashback",   icon:"💸",label:"Cash Back",  color:"#fc8181",border:"#9b2c2c",bg:"#1a0d0d",status:"coming-soon",description:"Configure cashback percentages, tier thresholds, payout schedules and user eligibility rules."},
+  {id:"cashback",   icon:"💸",label:"Cash Back",  color:"#fc8181",border:"#9b2c2c",bg:"#1a0d0d",status:"active",     description:"Configure cashback configs per segment — percentage, benefit duration, reward TTL, room criteria and threshold. JSON & CSV export."},
   {id:"liveops",      icon:"🎮",label:"Live Ops",      color:"#63b3ed",border:"#2b6cb0",bg:"#0d1520",status:"coming-soon",description:"Real-time event management, seasonal campaigns, push notifications and player engagement tools."},
   {id:"matchmaking",  icon:"🎯",label:"Matchmaking",  color:"#f687b3",border:"#97266d",bg:"#1a0d1a",status:"active",     description:"Score-based matchmaking simulator — pool scores, K-factor ELO, win ratio adjustments & match range config."},
   {id:"offers",       icon:"🎁",label:"Offers",        color:"#f6ad55",border:"#744210",bg:"#1a1508",status:"active",     description:"Configure IAP offers — Cash Rush, Rolling, 1+1, Buy All, Special & Beginners Pack. Per-offer segments, AI insights, JSON & CSV export."},
@@ -612,8 +926,7 @@ function MissionsPage({ onBack, readOnly, history, setHistory, histNote, setHist
   const removePersona= i => { setPersonas(p=>p.filter((_,pi)=>pi!==i)); setSelP(s=>Math.max(0,s>i?s-1:s)); };
 
   const buildJSON = () => ({ minUserLevel:1, tiers:compTiers.map(t=>{ const skus=[]; if(t.bcash>0)skus.push({type:"bonusCash",payload:{value:r2(t.bcash)}}); if(t.chips>0)skus.push({type:"virtual",payload:{value:Math.round(t.chips)}}); return{requiredTokenAmount:t.tokReq,skus}; }), goals:STATIC_GOALS, uiConfig:STATIC_UI, multipliersConfiguration:STATIC_MULT });
-  const runQA = json => { const checks=[],pass=m=>checks.push({ok:true,msg:m}),fail=m=>checks.push({ok:false,msg:m}); ["minUserLevel","tiers","goals","uiConfig","multipliersConfiguration"].forEach(k=>json[k]!==undefined?pass('✓ "'+k+'" present'):fail('✗ Missing "'+k+'"')); const jt=json.tiers||[]; jt.length===tiers.length?pass("✓ Tiers: "+tiers.length):fail("✗ Tiers: expected "+tiers.length+" got "+jt.length); let errs=0; tiers.forEach((t,i)=>{const j=jt[i];if(!j){fail("✗ Tier "+(i+1)+" missing");errs++;return;}if(j.requiredTokenAmount!==t.tokReq){fail("✗ T"+(i+1)+" tokReq mismatch");errs++;}}); if(!errs)pass("✓ All tier token amounts correct"); const g=json.goals||[]; g.length===2?pass("✓ Goals count: 2"):fail("✗ Goals: "+g.length); try{JSON.parse(JSON.stringify(json));pass("✓ JSON serialises cleanly");}catch(e){fail("✗ "+e.message);} return checks; };
-  const copyJSON = () => { const json=buildJSON(),checks=runQA(json); setQaRes(checks); if(checks.some(c=>!c.ok))return; const str=JSON.stringify(json,null,2); if(navigator.clipboard?.writeText)navigator.clipboard.writeText(str).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}); };
+  const copyJSON = () => { const json=buildJSON(),checks=runDeepQA("missions_v1",json); setQaRes(checks); if(checks.some(c=>c.level==="error"))return; const str=JSON.stringify(json,null,2); if(navigator.clipboard?.writeText)navigator.clipboard.writeText(str).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}); };
   const exportCSV = () => { try{downloadCSV(compTiers.map(t=>({"Tier":t.tierNum,"Tokens Req":t.tokReq,"Efective Tokens Req":r2(Math.max(0,t.tokReq-t.bcash*avgTokBC)),"Cumulative Tokens":t.cumTok,"Est. Tier Spend ($)":t.tierSpend,"Est. Cum. Spend ($)":t.cumSpend,"Reward B.cash":t.bcash||"","Reward Chips":t.chips||"","Tier Cashback %":pf(Math.min(t.tierCB,999)),"Cum. Cashback %":pf(t.cumCB),"Total Reward Value ($)":t.totalRew,"Cum. Reward Value ($)":t.cumRew})),"missions_v1.csv");setCsvMsg("✅ Downloaded!");}catch(e){setCsvMsg("⚠️ "+e.message);} };
   const saveSnapshot = () => { const now=new Date(); const label="Config "+now.toLocaleDateString()+" "+now.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}); const id=now.getTime(); const csvRows=compTiers.map(t=>({"Tier":t.tierNum,"Tokens Req":t.tokReq,"Efective Tokens Req":r2(Math.max(0,t.tokReq-t.bcash*avgTokBC)),"Cumulative Tokens":t.cumTok,"Est. Tier Spend ($)":t.tierSpend,"Est. Cum. Spend ($)":t.cumSpend,"Reward B.cash":t.bcash||"","Reward Chips":t.chips||"","Tier Cashback %":pf(Math.min(t.tierCB,999)),"Cum. Cashback %":pf(t.cumCB),"Total Reward Value ($)":t.totalRew,"Cum. Reward Value ($)":t.cumRew})); setHistory(h=>[{id,label,date:now.toISOString(),json:buildJSON(),csvRows,meta:{tiers:tiers.length,maxRew:compTiers.length>0?compTiers[compTiers.length-1].cumRew:0,avgTokBC}},...h]); setHistNote(n=>({...n,[id]:label})); };
 
@@ -978,13 +1291,9 @@ function MissionsPage({ onBack, readOnly, history, setHistory, histNote, setHist
               <h3 style={{margin:"0 0 4px",fontSize:"14px",fontWeight:"700",color:"#90cdf4"}}>📊 Export & QA</h3>
               {csvMsg&&<div style={{padding:"8px",background:"#1a2e1a",borderRadius:"6px",color:"#68d391",fontSize:"12px",marginBottom:"8px"}}>{csvMsg}</div>}
               <button onClick={exportCSV} style={{width:"100%",padding:"10px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:"700",fontSize:"13px",cursor:"pointer",marginBottom:"10px"}}>⬇ Download CSV</button>
-              <button onClick={()=>setQaRes(runQA(buildJSON()))} style={{width:"100%",padding:"9px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:"600",fontSize:"12px",cursor:"pointer",marginBottom:"8px"}}>🔍 Run QA</button>
+              <button onClick={()=>setQaRes(runDeepQA("missions_v1",buildJSON()))} style={{width:"100%",padding:"9px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:"600",fontSize:"12px",cursor:"pointer",marginBottom:"8px"}}>🔍 Deep QA</button>
               <button onClick={saveSnapshot} style={{width:"100%",padding:"9px",background:"linear-gradient(135deg,#553c9a,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:"700",fontSize:"12px",cursor:"pointer",marginBottom:"8px"}}>📜 Save to History</button>
-              {qaRes&&<div style={{display:"flex",flexDirection:"column",gap:"3px",maxHeight:"220px",overflowY:"auto"}}>{qaRes.map((c,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:"8px",padding:"5px 9px",borderRadius:"5px",fontSize:"11px",background:c.ok?"#141820":"#2d1a1a",border:"1px solid "+(c.ok?"#276749":"#c53030")}}>
-                  <span>{c.ok?"✅":"❌"}</span><span style={{color:c.ok?"#a0aec0":"#fc8181"}}>{c.msg}</span>
-                </div>
-              ))}</div>}
+              <DeepQAPanel checks={qaRes} onClose={()=>setQaRes(null)}/>
             </div>
           </div>
         )}
@@ -1064,6 +1373,7 @@ function MatchmakingPage({ onBack }) {
   const [numGames,        setNumGames]        = useState(50);
   const [winProb,         setWinProb]         = useState(0.5);
   const [copied,          setCopied]          = useState(false);
+  const [mmQaRes,         setMmQaRes]         = useState(null);
   const [simSeed,         setSimSeed]         = useState(0);
   const [scoreCV,         setScoreCV]         = useState(0.27);  // coefficient of variation for score spread (Excel=0.27)
   const [reqText,         setReqText]         = useState("");
@@ -1336,8 +1646,9 @@ For "no X consecutive losses", set winProb = 1 - (1/(maxLoseStreak+1)) approxima
   });
 
   const copyJSON = () => {
-    const str = JSON.stringify(buildJSON(),null,2);
-    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(str).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
+    const json=buildJSON(), checks=runDeepQA("matchmaking",json); setMmQaRes(checks);
+    if(checks.some(c=>c.level==="error"))return;
+    if(navigator.clipboard?.writeText) navigator.clipboard.writeText(JSON.stringify(json,null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);});
   };
 
   // ── Styles ────────────────────────────────────────────────────────────────
@@ -1794,6 +2105,8 @@ For "no X consecutive losses", set winProb = 1 - (1/(maxLoseStreak+1)) approxima
                 style={{width:"100%",marginTop:"8px",padding:"10px",background:copied?"#276749":"linear-gradient(135deg,#97266d,#553c9a)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:"700",fontSize:"13px",cursor:"pointer"}}>
                 {copied?"✅ Copied!":"📋 Copy JSON"}
               </button>
+              <button onClick={()=>setMmQaRes(runDeepQA("matchmaking",buildJSON()))} style={{width:"100%",marginTop:"6px",padding:"9px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:"600",fontSize:"12px",cursor:"pointer"}}>🔍 Deep QA</button>
+              <DeepQAPanel checks={mmQaRes} onClose={()=>setMmQaRes(null)}/>
             </div>
             <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
               {/* Config Summary */}
@@ -2059,22 +2372,7 @@ function MissionsV2Page({ onBack, readOnly, history, setHistory, histNote, setHi
     }), {}),
   });
 
-  const runQA = json => {
-    const checks=[], pass=m=>checks.push({ok:true,msg:m}), fail=m=>checks.push({ok:false,msg:m});
-    ["version","weekConfig","days","scoreTokenRates"].forEach(k => json[k]!==undefined ? pass('✓ "'+k+'" present') : fail('✗ Missing "'+k+'"'));
-    (json.days||[]).length===7 ? pass("✓ 7 days present") : fail("✗ Expected 7 days, got "+(json.days||[]).length);
-    GAMES2.forEach(g => (json.scoreTokenRates&&json.scoreTokenRates[g]) ? pass("✓ Rates for "+g) : fail("✗ Missing rates for "+g));
-    let starErr=0;
-    days.forEach((day,di) => MKEYS2.forEach(t => { if(day.missions[t].enabled && day.missions[t].stars<1){fail("✗ Day "+(di+1)+" "+MINFO2[t].label+" stars must be ≥ 1");starErr++;} }));
-    if(!starErr) pass("✓ All enabled mission stars ≥ 1");
-    const starVals = sortedMstn.map(m=>m.stars);
-    const uniqueStars = new Set(starVals);
-    uniqueStars.size===starVals.length ? pass("✓ Milestone star thresholds are unique") : fail("✗ Duplicate milestone star thresholds");
-    try { JSON.parse(JSON.stringify(json)); pass("✓ JSON serialises cleanly"); } catch(e) { fail("✗ "+e.message); }
-    return checks;
-  };
-
-  const copyJSON  = () => { const json=buildJSON(), checks=runQA(json); setQaRes(checks); if(checks.some(c=>!c.ok))return; const str=JSON.stringify(json,null,2); if(navigator.clipboard?.writeText) navigator.clipboard.writeText(str).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}); };
+  const copyJSON = () => { const json=buildJSON(), checks=runDeepQA("missions_v2",json); setQaRes(checks); if(checks.some(c=>c.level==="error"))return; const str=JSON.stringify(json,null,2); if(navigator.clipboard?.writeText) navigator.clipboard.writeText(str).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2500);}); };
   const exportCSV = () => { try { const rows=[]; days.forEach(day=>MKEYS2.forEach(t=>{const m=day.missions[t]; rows.push({"Day":day.day,"Mission":MINFO2[t].label,"Enabled":m.enabled?"Yes":"No","Target":m.target,"B.cash":m.bcash,"Chips":m.chips,"Stars":m.stars});})); downloadCSV(rows,"missions_v2.csv"); setCsvMsg("✅ Downloaded!"); } catch(e) { setCsvMsg("⚠️ "+e.message); } };
 
   const saveSnapshot = () => {
@@ -2421,13 +2719,9 @@ function MissionsV2Page({ onBack, readOnly, history, setHistory, histNote, setHi
               <h3 style={{margin:"0 0 4px",fontSize:"14px",fontWeight:"700",color:"#90cdf4"}}>📊 CSV + QA</h3>
               {csvMsg && <div style={{padding:"8px",background:"#1a2e1a",borderRadius:"6px",color:"#68d391",fontSize:"12px",marginBottom:"8px"}}>{csvMsg}</div>}
               <button onClick={exportCSV} style={{width:"100%",padding:"10px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:"700",fontSize:"13px",cursor:"pointer",marginBottom:"10px"}}>⬇ Download CSV</button>
-              <button onClick={()=>setQaRes(runQA(buildJSON()))} style={{width:"100%",padding:"9px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:"600",fontSize:"12px",cursor:"pointer",marginBottom:"8px"}}>🔍 Run QA</button>
+              <button onClick={()=>setQaRes(runDeepQA("missions_v2",buildJSON()))} style={{width:"100%",padding:"9px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:"600",fontSize:"12px",cursor:"pointer",marginBottom:"8px"}}>🔍 Deep QA</button>
               <button onClick={saveSnapshot} style={{width:"100%",padding:"9px",background:"linear-gradient(135deg,#553c9a,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:"700",fontSize:"12px",cursor:"pointer",marginBottom:"8px"}}>📜 Save to History</button>
-              {qaRes && <div style={{display:"flex",flexDirection:"column",gap:"3px",maxHeight:"220px",overflowY:"auto"}}>{qaRes.map((c,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:"8px",padding:"5px 9px",borderRadius:"5px",fontSize:"11px",background:c.ok?"#141820":"#2d1a1a",border:"1px solid "+(c.ok?"#276749":"#c53030")}}>
-                  <span>{c.ok?"✅":"❌"}</span><span style={{color:c.ok?"#a0aec0":"#fc8181"}}>{c.msg}</span>
-                </div>
-              ))}</div>}
+              <DeepQAPanel checks={qaRes} onClose={()=>setQaRes(null)}/>
             </div>
           </div>
         )}
@@ -2873,7 +3167,8 @@ function StandardOfferTab({ offers, setOffers, type, accent, readOnly }) {
   const chartData = offers.map(o=>({name:o.name.replace(/[A-Za-z\s]+/,"").trim()||o.name,"Value/$1":compVPD(o),"Cash":o.cash,"B.Cash":o.bonusCash,"Chips $":r2o((o.chips||0)*CV)}));
 
   const [copied,setCopied] = useState(false);
-  const copyJSON = () => { const j=buildJSON(); navigator.clipboard?.writeText(JSON.stringify(j,null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
+  const [stdQaRes,setStdQaRes] = useState(null);
+  const copyJSON = () => { const j=buildJSON(),checks=runDeepQA(type,j); setStdQaRes(checks); if(checks.some(c=>c.level==="error"))return; navigator.clipboard?.writeText(JSON.stringify(j,null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
 
   return (
     <div>
@@ -2957,10 +3252,12 @@ function StandardOfferTab({ offers, setOffers, type, accent, readOnly }) {
       </div>
 
       {/* Export */}
-      <div style={{display:"flex",gap:"8px"}}>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
         <button onClick={expCSV} style={{padding:"8px 16px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>⬇ CSV</button>
         <button onClick={copyJSON} style={{padding:"8px 16px",background:copied?"#276749":"#2c3a5a",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{copied?"✅ Copied":"📋 Copy JSON"}</button>
+        <button onClick={()=>setStdQaRes(runDeepQA(type,buildJSON()))} style={{padding:"8px 14px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:600,fontSize:"12px",cursor:"pointer"}}>🔍 Deep QA</button>
       </div>
+      <DeepQAPanel checks={stdQaRes} onClose={()=>setStdQaRes(null)}/>
     </div>
   );
 }
@@ -2980,7 +3277,8 @@ function OnePlus1Tab({ offers, setOffers, readOnly }) {
 
   const chartData = offers.map(o=>({name:o.name.replace(/1\+1 Offer /,"#"),"Val/$1":compVPD(o),"Buy B.Cash":o.buyBonusCash,"Free B.Cash":o.freeBonusCash}));
   const [copied,setCopied] = useState(false);
-  const copyJSON = () => { navigator.clipboard?.writeText(JSON.stringify(buildJSON(),null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
+  const [o11QaRes,setO11QaRes] = useState(null);
+  const copyJSON = () => { const j=buildJSON(),checks=runDeepQA("oneForOne",j); setO11QaRes(checks); if(checks.some(c=>c.level==="error"))return; navigator.clipboard?.writeText(JSON.stringify(j,null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
 
   return (
     <div>
@@ -3060,10 +3358,12 @@ function OnePlus1Tab({ offers, setOffers, readOnly }) {
           </ResponsiveContainer>
         </div>
       </div>
-      <div style={{display:"flex",gap:"8px"}}>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
         <button onClick={expCSV} style={{padding:"8px 16px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>⬇ CSV</button>
         <button onClick={copyJSON} style={{padding:"8px 16px",background:copied?"#276749":"#2c3a5a",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{copied?"✅ Copied":"📋 Copy JSON"}</button>
+        <button onClick={()=>setO11QaRes(runDeepQA("oneForOne",buildJSON()))} style={{padding:"8px 14px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:600,fontSize:"12px",cursor:"pointer"}}>🔍 Deep QA</button>
       </div>
+      <DeepQAPanel checks={o11QaRes} onClose={()=>setO11QaRes(null)}/>
     </div>
   );
 }
@@ -3094,7 +3394,8 @@ function RollingTab({ offers, setOffers, readOnly }) {
   const buildJSON = () => ({type:"rollingOffer",version:"1.0",offers:offers.map(o=>({id:o.name.toLowerCase().replace(/\s+/g,"_"),name:o.name,segment:o.segment,segments:o.segments,recurring:o.recurring,steps:o.steps.map(s=>({step:s.step,price:s.isFree?0:s.cash,chips:s.chips,bonusCash:s.bonusCash,isFree:s.isFree,cap:s.cap}))}))});
   const expCSV = () => downloadCSV(sel.steps.map(s=>({Offer:sel.name,Step:s.step,Price:s.isFree?0:s.cash,Chips:s.chips,"B.Cash":s.bonusCash,"Is Free":s.isFree?"Yes":"No",CAP:s.cap})),"rolling_offer.csv");
   const [copied,setCopied] = useState(false);
-  const copyJSON = () => { navigator.clipboard?.writeText(JSON.stringify(buildJSON(),null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
+  const [rollQaRes,setRollQaRes] = useState(null);
+  const copyJSON = () => { const j=buildJSON(),checks=runDeepQA("rollingOffer",j); setRollQaRes(checks); if(checks.some(c=>c.level==="error"))return; navigator.clipboard?.writeText(JSON.stringify(j,null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
 
   const stepChart = stepsWithCalc.map(s=>({step:"S"+s.step,"Price":s.isFree?0:s.cash,"B.Cash":s.bonusCash,"Chips$":r2o((s.chips||0)*CV)}));
   const cumChart  = stepsWithCalc.map((s,i)=>({step:"S"+(i+1),cumCost:r2o(s.totalCost)}));
@@ -3184,10 +3485,12 @@ function RollingTab({ offers, setOffers, readOnly }) {
           </ResponsiveContainer>
         </div>
       </div>
-      <div style={{display:"flex",gap:"8px"}}>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
         <button onClick={expCSV} style={{padding:"8px 16px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>⬇ CSV</button>
         <button onClick={copyJSON} style={{padding:"8px 16px",background:copied?"#276749":"#2c3a5a",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{copied?"✅ Copied":"📋 Copy JSON"}</button>
+        <button onClick={()=>setRollQaRes(runDeepQA("rollingOffer",buildJSON()))} style={{padding:"8px 14px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:600,fontSize:"12px",cursor:"pointer"}}>🔍 Deep QA</button>
       </div>
+      <DeepQAPanel checks={rollQaRes} onClose={()=>setRollQaRes(null)}/>
     </div>
   );
 }
@@ -3211,7 +3514,8 @@ function BuyAllTab({ offers, setOffers, readOnly }) {
   const buildJSON = () => ({type:"buyAll",version:"1.0",offers:offers.map(o=>({id:o.name.toLowerCase().replace(/\s+/g,"_"),name:o.name,segments:o.segments,nonPayer:o.nonPayer,payer:o.payer}))});
   const expCSV = () => { const rows=[]; steps.forEach(s=>rows.push({"Offer":sel.name,"Segment":seg==="nonPayer"?"Non-Payer":"Payer","Step":s.step,"Price ($)":s.price,"B.Cash":s.bonusCash,"Chips":s.chips,"Reward Val":compVal(s)})); downloadCSV(rows,"buyall_offer.csv"); };
   const [copied,setCopied] = useState(false);
-  const copyJSON = () => { navigator.clipboard?.writeText(JSON.stringify(buildJSON(),null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
+  const [baQaRes,setBaQaRes] = useState(null);
+  const copyJSON = () => { const j=buildJSON(),checks=runDeepQA("buyAll",j); setBaQaRes(checks); if(checks.some(c=>c.level==="error"))return; navigator.clipboard?.writeText(JSON.stringify(j,null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);}); };
 
   const chartData = steps.map(s=>({step:"S"+s.step,"Price":s.price,"B.Cash":s.bonusCash,"Chips$":r2o((s.chips||0)*CV)}));
 
@@ -3288,10 +3592,12 @@ function BuyAllTab({ offers, setOffers, readOnly }) {
           </ResponsiveContainer>
         </div>
       </div>
-      <div style={{display:"flex",gap:"8px"}}>
+      <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
         <button onClick={expCSV} style={{padding:"8px 16px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>⬇ CSV</button>
         <button onClick={copyJSON} style={{padding:"8px 16px",background:copied?"#276749":"#2c3a5a",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{copied?"✅ Copied":"📋 Copy JSON"}</button>
+        <button onClick={()=>setBaQaRes(runDeepQA("buyAll",buildJSON()))} style={{padding:"8px 14px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:600,fontSize:"12px",cursor:"pointer"}}>🔍 Deep QA</button>
       </div>
+      <DeepQAPanel checks={baQaRes} onClose={()=>setBaQaRes(null)}/>
     </div>
   );
 }
@@ -3356,6 +3662,373 @@ function OffersPage({ onBack, readOnly }) {
         {subTab==="rolling"   && <RollingTab        offers={rolling}   setOffers={setRolling}   readOnly={readOnly}/>}
         {subTab==="buyall"    && <BuyAllTab         offers={buyAll}    setOffers={setBuyAll}    readOnly={readOnly}/>}
         {subTab==="beginners" && <StandardOfferTab offers={beginners} setOffers={setBeginners} type="beginners" accent="#76e4f7" readOnly={readOnly}/>}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CASH BACK
+// ══════════════════════════════════════════════════════════════════════════════
+let _nextCbId = 600;
+
+// Duration helpers — "D.HH:MM:SS" ↔ total minutes
+const minsToDs = (totalMins) => {
+  const tm = Math.max(0, Math.round(+totalMins||0));
+  const d = Math.floor(tm / 1440);
+  const rem = tm % 1440;
+  const h = Math.floor(rem / 60);
+  const m = rem % 60;
+  return `${d}.${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:00`;
+};
+const dsToCbLabel = (mins) => {
+  const tm = Math.max(0, Math.round(+mins||0));
+  if (tm >= 1440) return (tm/1440).toFixed(1).replace(/\.0$/,"")+"d";
+  if (tm >= 60)   return (tm/60).toFixed(1).replace(/\.0$/,"")+"h";
+  return tm+"m";
+};
+
+const CB_SEGS = ["Everyone","Non-Payer","New User","Payer","Whale","VIP","Churned Payer","Casual"];
+
+const DEF_CASHBACK_CONFIGS = [
+  { id:601, name:"None Payers – New Users",        percentage:0.15, benefitMins:60,  minBenefitMins:5, ttlDays:3, almostPct:0.5, useThreshold:false, threshold:1.01, included:[".*"], excluded:[], segments:["Non-Payer","New User"] },
+  { id:602, name:"Existing None Payers",           percentage:0.30, benefitMins:30,  minBenefitMins:5, ttlDays:3, almostPct:0.5, useThreshold:false, threshold:1.01, included:[".*"], excluded:[], segments:["Non-Payer"] },
+  { id:603, name:"Churn Payer (7 days)",           percentage:0.07, benefitMins:30,  minBenefitMins:5, ttlDays:3, almostPct:0.5, useThreshold:false, threshold:1.01, included:[".*"], excluded:[], segments:["Churned Payer"] },
+  { id:604, name:"Churn Payer (7 days) Threshold", percentage:0.07, benefitMins:30,  minBenefitMins:5, ttlDays:3, almostPct:0.5, useThreshold:true,  threshold:1.01, included:[".*"], excluded:[], segments:["Churned Payer"] },
+  { id:605, name:"Existing None Payers (20%)",     percentage:0.20, benefitMins:30,  minBenefitMins:5, ttlDays:3, almostPct:0.5, useThreshold:false, threshold:1.01, included:[".*"], excluded:[], segments:["Non-Payer"] },
+];
+
+function CashBackPage({ onBack, readOnly }) {
+  const [configs, setConfigs] = usePersist("gp:cbConfigs", ()=>DEF_CASHBACK_CONFIGS.map(c=>({...c,included:[...c.included],excluded:[...c.excluded],segments:[...c.segments]})));
+  const [selId,   setSelId]   = useState(configs[0]?.id);
+  const [cbQaRes, setCbQaRes] = useState(null);
+  const [copied,  setCopied]  = useState(false);
+  const [newPattern, setNewPattern] = useState("");
+  const [newExPattern, setNewExPattern] = useState("");
+
+  const sel = configs.find(c=>c.id===selId) || configs[0];
+  if (!sel) return null;
+
+  const upd = (k,v) => setConfigs(p=>p.map(c=>c.id!==sel.id?c:{...c,[k]:v}));
+  const addCfg = () => {
+    const nid = _nextCbId++;
+    setConfigs(p=>[...p,{id:nid,name:"New Config "+(p.length+1),percentage:0.10,benefitMins:30,minBenefitMins:5,ttlDays:3,almostPct:0.5,useThreshold:false,threshold:1.0,included:[".*"],excluded:[],segments:["Everyone"]}]);
+    setSelId(nid);
+  };
+  const delCfg = (id) => { if(configs.length<=1)return; const rest=configs.filter(c=>c.id!==id); setConfigs(rest); if(selId===id)setSelId(rest[0].id); };
+
+  const addIncl = () => { if(!newPattern.trim())return; upd("included",[...sel.included,newPattern.trim()]); setNewPattern(""); };
+  const rmIncl  = (i) => upd("included",sel.included.filter((_,idx)=>idx!==i));
+  const addExcl = () => { if(!newExPattern.trim())return; upd("excluded",[...sel.excluded,newExPattern.trim()]); setNewExPattern(""); };
+  const rmExcl  = (i) => upd("excluded",sel.excluded.filter((_,idx)=>idx!==i));
+
+  const buildOneCfgJSON = (c) => {
+    const j = {
+      percentage: c.percentage,
+      benefitActiveDuration: minsToDs(c.benefitMins),
+      minBenefitActiveDuration: minsToDs(c.minBenefitMins),
+      rewardTtl: minsToDs(c.ttlDays*1440),
+      almostFinishedActiveDurationPercentage: c.almostPct,
+      roomsCriteria: {
+        ...(c.useThreshold ? {threshold: +c.threshold} : {}),
+        included: c.included,
+        excluded: c.excluded,
+      },
+    };
+    return j;
+  };
+
+  const buildJSON = () => ({
+    version:"1.0",
+    configs: configs.map(c=>({
+      id: c.name.toLowerCase().replace(/[\s()%–-]+/g,"_"),
+      name: c.name,
+      segments: c.segments,
+      config: buildOneCfgJSON(c),
+    }))
+  });
+
+  const copyJSON = () => {
+    const j = buildJSON(), checks = runDeepQA("cashback", j);
+    setCbQaRes(checks);
+    if(checks.some(c=>c.level==="error")) return;
+    navigator.clipboard?.writeText(JSON.stringify(j,null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});
+  };
+
+  const copySelJSON = () => {
+    const j = buildOneCfgJSON(sel);
+    navigator.clipboard?.writeText(JSON.stringify(j,null,2)).then(()=>{setCopied(true);setTimeout(()=>setCopied(false),2000);});
+  };
+
+  const exportCSV = () => {
+    const rows = configs.map(c=>({
+      Name:c.name,
+      "Cashback %":(c.percentage*100).toFixed(0)+"%",
+      "Benefit Duration":dsToCbLabel(c.benefitMins),
+      "Min Benefit":dsToCbLabel(c.minBenefitMins),
+      "Reward TTL":c.ttlDays+"d",
+      "Almost Finished %":(c.almostPct*100).toFixed(0)+"%",
+      Threshold:c.useThreshold?c.threshold:"—",
+      "Included Rooms":c.included.join(";"),
+      "Excluded Rooms":c.excluded.join(";"),
+      Segments:c.segments.join("|"),
+    }));
+    downloadCSV(rows,"cashback_configs.csv");
+  };
+
+  const ACCENT = "#fc8181";
+  const mc = {background:"#1a1f2e",border:"1px solid #2d3748",borderRadius:"12px",padding:"14px",marginBottom:"12px"};
+  const inp = (w) => ({width:w||"100%",padding:"5px 8px",background:"#0f1117",border:"1px solid #2d3748",borderRadius:"6px",color:"#e2e8f0",fontSize:"12px",outline:"none",boxSizing:"border-box"});
+  const lbl = {fontSize:"10px",fontWeight:700,color:"#4a5568",marginBottom:"4px",display:"block"};
+
+  // Chart data: compare all configs
+  const chartData = configs.map(c=>({
+    name: c.name.length>14?c.name.slice(0,12)+"…":c.name,
+    "CB %": +(c.percentage*100).toFixed(0),
+    "Duration (h)": +(c.benefitMins/60).toFixed(1),
+    "TTL (d)": c.ttlDays,
+  }));
+
+  return (
+    <div style={{fontFamily:"'Segoe UI',sans-serif",background:"#0f1117",minHeight:"100vh",color:"#e2e8f0"}}>
+      {/* Header */}
+      <div style={{background:"linear-gradient(135deg,#1a0d0d,#1a1f2e)",padding:"10px 16px",borderBottom:"1px solid #2d3748",display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}}>
+        <button onClick={onBack} style={{padding:"5px 12px",background:"#1e2a45",border:"1px solid #2d3748",borderRadius:"6px",color:"#a0aec0",fontSize:"12px",cursor:"pointer"}}>← Portal</button>
+        <span style={{color:"#2d3748"}}>|</span>
+        <span style={{fontSize:"13px",color:ACCENT,fontWeight:"700"}}>💸 Cash Back Manager</span>
+        <div style={{marginLeft:"auto",display:"flex",gap:"14px",fontSize:"11px"}}>
+          {[["Configs",configs.length,"#fc8181"],["Avg CB%",(configs.reduce((a,c)=>a+c.percentage,0)/configs.length*100).toFixed(0)+"%","#68d391"],["Segments",new Set(configs.flatMap(c=>c.segments)).size,"#90cdf4"]].map(([l,v,cl])=>(
+            <span key={l} style={{color:"#718096"}}>{l}: <strong style={{color:cl}}>{v}</strong></span>
+          ))}
+        </div>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"220px 1fr",gap:"0",minHeight:"calc(100vh - 48px)"}}>
+        {/* ── Config List ── */}
+        <div style={{background:"#0d1117",borderRight:"1px solid #1e2a45",padding:"10px",display:"flex",flexDirection:"column",gap:"6px"}}>
+          {!readOnly && <button onClick={addCfg} style={{padding:"7px",background:"linear-gradient(135deg,#9b2c2c,#2c5282)",border:"none",borderRadius:"7px",color:"#fff",fontWeight:700,fontSize:"11px",cursor:"pointer",marginBottom:"6px"}}>+ Add Config</button>}
+          {configs.map(c=>(
+            <div key={c.id} onClick={()=>setSelId(c.id)}
+              style={{padding:"10px",borderRadius:"8px",cursor:"pointer",border:"1px solid "+(c.id===selId?"#9b2c2c":"#1e2a45"),background:c.id===selId?"#1a0d0d":"#111827",transition:"all 0.15s"}}>
+              <div style={{fontSize:"11px",fontWeight:700,color:c.id===selId?ACCENT:"#a0aec0",marginBottom:"4px"}}>{c.name}</div>
+              <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+                <span style={{fontSize:"9px",padding:"1px 6px",borderRadius:"10px",background:"#2d1a1a",color:ACCENT,fontWeight:700}}>{(c.percentage*100).toFixed(0)}%</span>
+                <span style={{fontSize:"9px",padding:"1px 6px",borderRadius:"10px",background:"#141820",color:"#718096"}}>{dsToCbLabel(c.benefitMins)}</span>
+              </div>
+              {c.segments.length>0 && <div style={{fontSize:"9px",color:"#4a5568",marginTop:"4px"}}>{c.segments.slice(0,2).join(", ")}{c.segments.length>2?" +"+( c.segments.length-2):""}</div>}
+            </div>
+          ))}
+        </div>
+
+        {/* ── Editor ── */}
+        <div style={{padding:"14px 16px",maxWidth:"900px"}}>
+          {/* Config name + delete */}
+          <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"14px"}}>
+            <input value={sel.name} onChange={e=>upd("name",e.target.value)} disabled={readOnly}
+              style={{...inp(),fontSize:"15px",fontWeight:700,color:ACCENT,background:"#0f1117",flex:1}}/>
+            {!readOnly && configs.length>1 && <button onClick={()=>delCfg(sel.id)} style={{padding:"6px 12px",background:"#2d1a1a",border:"1px solid #9b2c2c",borderRadius:"7px",color:"#fc8181",fontSize:"11px",cursor:"pointer",fontWeight:700}}>🗑 Delete</button>}
+          </div>
+
+          {/* Main params grid */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"12px",marginBottom:"14px"}}>
+            {/* Cashback % */}
+            <div style={mc}>
+              <span style={lbl}>CASHBACK %</span>
+              <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                <input type="range" min="1" max="100" value={Math.round(sel.percentage*100)} disabled={readOnly}
+                  onChange={e=>upd("percentage",+e.target.value/100)}
+                  style={{flex:1,accentColor:ACCENT}}/>
+                <input type="number" min="0" max="100" step="1" value={Math.round(sel.percentage*100)} disabled={readOnly}
+                  onChange={e=>upd("percentage",Math.min(100,Math.max(0,+e.target.value||0))/100)}
+                  style={{...inp(48)}}/>
+                <span style={{color:ACCENT,fontWeight:700,fontSize:"13px"}}>%</span>
+              </div>
+              <div style={{fontSize:"10px",color:"#4a5568",marginTop:"6px"}}>
+                Example: $10 spent → <span style={{color:"#68d391",fontWeight:700}}>${(10*sel.percentage).toFixed(2)}</span> cashback
+              </div>
+            </div>
+
+            {/* Almost Finished % */}
+            <div style={mc}>
+              <span style={lbl}>ALMOST FINISHED THRESHOLD</span>
+              <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                <input type="range" min="10" max="90" value={Math.round(sel.almostPct*100)} disabled={readOnly}
+                  onChange={e=>upd("almostPct",+e.target.value/100)}
+                  style={{flex:1,accentColor:"#f6ad55"}}/>
+                <input type="number" min="0" max="100" step="5" value={Math.round(sel.almostPct*100)} disabled={readOnly}
+                  onChange={e=>upd("almostPct",Math.min(100,Math.max(0,+e.target.value||0))/100)}
+                  style={{...inp(48)}}/>
+                <span style={{color:"#f6ad55",fontWeight:700,fontSize:"13px"}}>%</span>
+              </div>
+              <div style={{fontSize:"10px",color:"#4a5568",marginTop:"6px"}}>
+                Show "almost done" UI when {Math.round(sel.almostPct*100)}% of duration remains
+              </div>
+            </div>
+
+            {/* Reward TTL */}
+            <div style={mc}>
+              <span style={lbl}>REWARD TTL (DAYS)</span>
+              <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                <input type="number" min="1" max="30" step="1" value={sel.ttlDays} disabled={readOnly}
+                  onChange={e=>upd("ttlDays",Math.max(1,+e.target.value||1))}
+                  style={{...inp(70)}}/>
+                <span style={{color:"#90cdf4",fontWeight:700,fontSize:"13px"}}>days</span>
+              </div>
+              <div style={{fontSize:"10px",color:"#4a5568",marginTop:"6px"}}>
+                JSON: <span style={{color:"#718096",fontFamily:"monospace"}}>{minsToDs(sel.ttlDays*1440)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Durations */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"14px"}}>
+            <div style={mc}>
+              <span style={lbl}>BENEFIT ACTIVE DURATION</span>
+              <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                <input type="number" min="1" step="1" value={sel.benefitMins} disabled={readOnly}
+                  onChange={e=>upd("benefitMins",Math.max(1,+e.target.value||1))}
+                  style={{...inp(70)}}/>
+                <span style={{color:"#a0aec0",fontWeight:700,fontSize:"13px"}}>min</span>
+                <span style={{color:"#4a5568",fontSize:"11px"}}>({dsToCbLabel(sel.benefitMins)})</span>
+              </div>
+              <div style={{fontSize:"10px",color:"#4a5568",marginTop:"6px"}}>
+                JSON: <span style={{color:"#718096",fontFamily:"monospace"}}>{minsToDs(sel.benefitMins)}</span>
+              </div>
+            </div>
+            <div style={mc}>
+              <span style={lbl}>MIN BENEFIT ACTIVE DURATION</span>
+              <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                <input type="number" min="1" step="1" value={sel.minBenefitMins} disabled={readOnly}
+                  onChange={e=>upd("minBenefitMins",Math.max(1,Math.min(sel.benefitMins,+e.target.value||1)))}
+                  style={{...inp(70)}}/>
+                <span style={{color:"#a0aec0",fontWeight:700,fontSize:"13px"}}>min</span>
+                <span style={{color:"#4a5568",fontSize:"11px"}}>({dsToCbLabel(sel.minBenefitMins)})</span>
+              </div>
+              {sel.minBenefitMins>sel.benefitMins && <div style={{fontSize:"10px",color:"#fc8181",marginTop:"4px"}}>⚠ Min must be ≤ Benefit duration</div>}
+              <div style={{fontSize:"10px",color:"#4a5568",marginTop:"6px"}}>
+                JSON: <span style={{color:"#718096",fontFamily:"monospace"}}>{minsToDs(sel.minBenefitMins)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Rooms Criteria */}
+          <div style={mc}>
+            <span style={{...lbl,fontSize:"11px"}}>ROOMS CRITERIA</span>
+            {/* Threshold */}
+            <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"10px"}}>
+              <button onClick={()=>!readOnly&&upd("useThreshold",!sel.useThreshold)}
+                style={{padding:"4px 12px",background:sel.useThreshold?"#1a2e1a":"#1a1f2e",border:"1px solid "+(sel.useThreshold?"#38a169":"#2d3748"),borderRadius:"6px",color:sel.useThreshold?"#68d391":"#718096",fontSize:"11px",cursor:readOnly?"default":"pointer",fontWeight:700}}>
+                {sel.useThreshold?"✅ Threshold ON":"⬜ Threshold OFF"}
+              </button>
+              {sel.useThreshold && (
+                <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+                  <span style={{fontSize:"11px",color:"#a0aec0"}}>Min spend $</span>
+                  <input type="number" min="0.01" step="0.01" value={sel.threshold} disabled={readOnly}
+                    onChange={e=>upd("threshold",+e.target.value||0)}
+                    style={{...inp(80)}}/>
+                </div>
+              )}
+            </div>
+            {/* Included */}
+            <div style={{marginBottom:"10px"}}>
+              <span style={lbl}>INCLUDED ROOMS (regex patterns)</span>
+              <div style={{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"6px"}}>
+                {sel.included.map((p,i)=>(
+                  <span key={i} style={{padding:"2px 8px",background:"#0d1a10",border:"1px solid #276749",borderRadius:"12px",fontSize:"11px",color:"#68d391",display:"flex",alignItems:"center",gap:"4px"}}>
+                    {p}
+                    {!readOnly&&<button onClick={()=>rmIncl(i)} style={{background:"none",border:"none",color:"#4a5568",cursor:"pointer",fontSize:"12px",lineHeight:1,padding:0}}>×</button>}
+                  </span>
+                ))}
+              </div>
+              {!readOnly&&<div style={{display:"flex",gap:"6px"}}>
+                <input value={newPattern} onChange={e=>setNewPattern(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addIncl()}
+                  placeholder='e.g. .* or 5006' style={{...inp(),flex:1,fontSize:"11px"}}/>
+                <button onClick={addIncl} style={{padding:"5px 12px",background:"#276749",border:"none",borderRadius:"6px",color:"#9ae6b4",fontSize:"11px",cursor:"pointer",fontWeight:700}}>+ Add</button>
+              </div>}
+            </div>
+            {/* Excluded */}
+            <div>
+              <span style={lbl}>EXCLUDED ROOMS (regex patterns)</span>
+              <div style={{display:"flex",flexWrap:"wrap",gap:"6px",marginBottom:"6px"}}>
+                {sel.excluded.length===0 && <span style={{fontSize:"11px",color:"#4a5568"}}>None excluded</span>}
+                {sel.excluded.map((p,i)=>(
+                  <span key={i} style={{padding:"2px 8px",background:"#1a0d0d",border:"1px solid #9b2c2c",borderRadius:"12px",fontSize:"11px",color:"#fc8181",display:"flex",alignItems:"center",gap:"4px"}}>
+                    {p}
+                    {!readOnly&&<button onClick={()=>rmExcl(i)} style={{background:"none",border:"none",color:"#4a5568",cursor:"pointer",fontSize:"12px",lineHeight:1,padding:0}}>×</button>}
+                  </span>
+                ))}
+              </div>
+              {!readOnly&&<div style={{display:"flex",gap:"6px"}}>
+                <input value={newExPattern} onChange={e=>setNewExPattern(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addExcl()}
+                  placeholder='e.g. 9001' style={{...inp(),flex:1,fontSize:"11px"}}/>
+                <button onClick={addExcl} style={{padding:"5px 12px",background:"#9b2c2c",border:"none",borderRadius:"6px",color:"#feb2b2",fontSize:"11px",cursor:"pointer",fontWeight:700}}>+ Add</button>
+              </div>}
+            </div>
+          </div>
+
+          {/* Segments */}
+          <div style={mc}>
+            <span style={lbl}>TARGET SEGMENTS</span>
+            <div style={{display:"flex",flexWrap:"wrap",gap:"6px"}}>
+              {CB_SEGS.map(s=>{
+                const on=sel.segments.includes(s);
+                return (
+                  <button key={s} onClick={()=>{if(readOnly)return; upd("segments",on?sel.segments.filter(x=>x!==s):[...sel.segments,s]);}}
+                    style={{padding:"4px 12px",background:on?"#1a2e1a":"#141820",border:"1px solid "+(on?"#38a169":"#2d3748"),borderRadius:"20px",color:on?"#68d391":"#718096",fontSize:"11px",cursor:readOnly?"default":"pointer",fontWeight:on?700:400}}>
+                    {s}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Charts */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px",marginBottom:"14px"}}>
+            <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+              <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>CASHBACK % COMPARISON</div>
+              <ResponsiveContainer width="100%" height={150}>
+                <BarChart data={chartData} margin={{top:0,right:8,left:-20,bottom:0}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+                  <XAxis dataKey="name" tick={{fontSize:8,fill:"#4a5568"}}/>
+                  <YAxis tick={{fontSize:9,fill:"#4a5568"}} unit="%"/>
+                  <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}} formatter={(v)=>[v+"%","CB %"]}/>
+                  <Bar dataKey="CB %" fill="#fc8181" radius={[3,3,0,0]}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div style={{background:"#111827",border:"1px solid #1e2a45",borderRadius:"10px",padding:"12px"}}>
+              <div style={{fontSize:"11px",color:"#4a5568",fontWeight:700,marginBottom:"8px"}}>BENEFIT DURATION (hours)</div>
+              <ResponsiveContainer width="100%" height={150}>
+                <BarChart data={chartData} margin={{top:0,right:8,left:-20,bottom:0}}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e2a45"/>
+                  <XAxis dataKey="name" tick={{fontSize:8,fill:"#4a5568"}}/>
+                  <YAxis tick={{fontSize:9,fill:"#4a5568"}} unit="h"/>
+                  <Tooltip contentStyle={{background:"#111827",border:"1px solid #2d3748",fontSize:11}} formatter={(v)=>[v+"h","Duration"]}/>
+                  <Bar dataKey="Duration (h)" fill="#90cdf4" radius={[3,3,0,0]}/>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* JSON preview for selected config */}
+          <div style={mc}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"8px"}}>
+              <span style={{fontSize:"12px",fontWeight:700,color:"#90cdf4"}}>📄 JSON — {sel.name}</span>
+              <span style={{fontSize:"10px",color:"#4a5568"}}>(single config payload)</span>
+            </div>
+            <textarea readOnly value={JSON.stringify(buildOneCfgJSON(sel),null,2)}
+              style={{width:"100%",height:"200px",background:"#0f1117",border:"1px solid #2d3748",borderRadius:"8px",color:"#a0aec0",fontSize:"10px",padding:"10px",fontFamily:"monospace",resize:"vertical",boxSizing:"border-box",outline:"none"}}/>
+          </div>
+
+          {/* Export buttons */}
+          <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center",marginBottom:"6px"}}>
+            <button onClick={copySelJSON} style={{padding:"8px 16px",background:copied?"#276749":"#2c3a5a",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>{copied?"✅ Copied":"📋 Copy Selected JSON"}</button>
+            <button onClick={copyJSON} style={{padding:"8px 16px",background:"linear-gradient(135deg,#553c9a,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>📋 Copy All Configs JSON</button>
+            <button onClick={exportCSV} style={{padding:"8px 16px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>⬇ CSV</button>
+            <button onClick={()=>setCbQaRes(runDeepQA("cashback",buildJSON()))} style={{padding:"8px 14px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:600,fontSize:"12px",cursor:"pointer"}}>🔍 Deep QA</button>
+          </div>
+          <DeepQAPanel checks={cbQaRes} onClose={()=>setCbQaRes(null)}/>
+        </div>
       </div>
     </div>
   );
@@ -3436,24 +4109,9 @@ function TournamentsPage({ onBack }) {
 
   });
 
-  const runQA = (json) => {
-    const checks = [], pass = m => checks.push({ok:true,msg:m}), fail = m => checks.push({ok:false,msg:m});
-    ["minLevel","tokensEntryFee","playersPerBucket","prizeCalculation","winnerReward","loserPopup","tokensReward"].forEach(k => json[k]!==undefined ? pass('✓ "'+k+'" present') : fail('✗ Missing "'+k+'"'));
-    const pp = (json.prizeCalculation?.placesPrizes||[]);
-    pp.length > 0 ? pass("✓ "+pp.length+" prize places") : fail("✗ No prize places defined");
-    const tw = pp.reduce((s,p)=>s+(p.weight||0),0);
-    (tw > 99 && tw < 101) ? pass("✓ Weights sum ≈ 100 ("+tw.toFixed(2)+")") : fail("⚠ Weights sum = "+tw.toFixed(2)+" (expected ~100)");
-    const sr = json.tokensReward?.syncRoomRewards||[], ar = json.tokensReward?.asyncRoomRewards||[];
-    (sr.length+ar.length) > 0 ? pass("✓ "+(sr.length+ar.length)+" room reward(s)") : fail("✗ No room rewards defined");
-    json.prizeCalculation?.seed?.skus?.[0]?.payload?.value > 0 ? pass("✓ Seed > 0") : fail("✗ Seed is 0");
-    json.prizeCalculation?.tokenPrice > 0 ? pass("✓ tokenPrice > 0") : fail("✗ tokenPrice is 0");
-    try { JSON.parse(JSON.stringify(json)); pass("✓ JSON serialises cleanly"); } catch(e) { fail("✗ "+e.message); }
-    return checks;
-  };
-
   const copyJSON = () => {
-    const json = buildJSON(), checks = runQA(json); setQaRes(checks);
-    if (checks.some(c=>!c.ok)) return;
+    const json = buildJSON(), checks = runDeepQA("tournaments", json); setQaRes(checks);
+    if (checks.some(c=>c.level==="error")) return;
     navigator.clipboard?.writeText(JSON.stringify(json,null,2)).then(()=>{ setCopied(true); setTimeout(()=>setCopied(false),2500); });
   };
 
@@ -3769,13 +4427,9 @@ function TournamentsPage({ onBack }) {
               <h3 style={{margin:"0 0 4px",fontSize:"14px",fontWeight:"700",color:"#90cdf4"}}>📊 CSV + QA</h3>
               {csvMsg && <div style={{padding:"8px",background:"#1a2e1a",borderRadius:"6px",color:"#68d391",fontSize:"12px",marginBottom:"8px"}}>{csvMsg}</div>}
               <button onClick={exportCSV} style={{width:"100%",padding:"10px",background:"linear-gradient(135deg,#276749,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:"700",fontSize:"13px",cursor:"pointer",marginBottom:"10px"}}>⬇ Download CSV</button>
-              <button onClick={()=>setQaRes(runQA(buildJSON()))} style={{width:"100%",padding:"9px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:"600",fontSize:"12px",cursor:"pointer",marginBottom:"8px"}}>🔍 Run QA</button>
+              <button onClick={()=>setQaRes(runDeepQA("tournaments",buildJSON()))} style={{width:"100%",padding:"9px",background:"#2d3748",border:"1px solid #4a5568",borderRadius:"8px",color:"#a0aec0",fontWeight:"600",fontSize:"12px",cursor:"pointer",marginBottom:"8px"}}>🔍 Deep QA</button>
               <button onClick={saveSnapshot} style={{width:"100%",padding:"9px",background:"linear-gradient(135deg,#553c9a,#2c5282)",border:"none",borderRadius:"8px",color:"#fff",fontWeight:"700",fontSize:"12px",cursor:"pointer",marginBottom:"8px"}}>📜 Save to History</button>
-              {qaRes && <div style={{display:"flex",flexDirection:"column",gap:"3px",maxHeight:"250px",overflowY:"auto"}}>{qaRes.map((c,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:"8px",padding:"5px 9px",borderRadius:"5px",fontSize:"11px",background:c.ok?"#141820":"#2d1a1a",border:"1px solid "+(c.ok?"#276749":"#c53030")}}>
-                  <span>{c.ok?"✅":"❌"}</span><span style={{color:c.ok?"#a0aec0":"#fc8181"}}>{c.msg}</span>
-                </div>
-              ))}</div>}
+              <DeepQAPanel checks={qaRes} onClose={()=>setQaRes(null)}/>
             </div>
           </div>
         )}
@@ -3856,6 +4510,11 @@ function PortalWithAuth({ currentUser, users, setUsers, onLogout, onOpenAdmin })
   if (active==="tournaments") return (
     <AccessGate sectionId="tournaments">
       <div><ViewOnlyBanner sectionId="tournaments"/><TournamentsPage onBack={()=>setActive(null)}/></div>
+    </AccessGate>
+  );
+  if (active==="cashback") return (
+    <AccessGate sectionId="cashback">
+      <div><ViewOnlyBanner sectionId="cashback"/><CashBackPage onBack={()=>setActive(null)} readOnly={!canEdit(sectionPerm("cashback"))}/></div>
     </AccessGate>
   );
   if (active==="offers") return (
